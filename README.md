@@ -11,7 +11,7 @@
 NicheBench provides a comprehensive benchmarking framework for evaluating AI models on framework-specific tasks such as:
 
 - **Drupal 10/11** module development
-- **WordPress** plugin creation  
+- **WordPress** plugin creation
 - **Code debugging** scenarios
 - **Technical quizzes** and knowledge assessments
 
@@ -30,15 +30,10 @@ Built on top of [LightEval](https://github.com/huggingface/lighteval), NicheBenc
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- Git
+- Python 3.10+
+- Poetry (optional - will be installed automatically)
 
 ## Installation & Setup
-
-### Prerequisites
-
-- Docker and Docker Compose
-- Git
 
 ### Development Setup (Recommended)
 
@@ -51,48 +46,51 @@ For development with IDE support and shared dependencies:
    cd nichebench
    ```
 
-2. **Start development environment:**
+2. **Setup development environment:**
 
    ```bash
-   # First run creates shared .venv directory
-   docker compose -f docker-compose.dev.yml up
-   
-   # Or run interactively
-   docker compose -f docker-compose.dev.yml run --rm nichebench-dev bash
+   cd nichebench
+   ./setup.sh
    ```
 
-3. **Configure your IDE:**
+3. **Activate the environment:**
+
+   ```bash
+   poetry shell
+   ```
+
+4. **Test the CLI:**
+
+   ```bash
+   nichebench --help
+   nichebench list-tasks
+   ```
+
+5. **Configure your IDE:**
    - **VS Code:** Set Python interpreter to `./.venv/bin/python`
    - **PyCharm:** Point Project SDK to `./.venv/bin/python`
    - **Other IDEs:** Use `./.venv/bin/python` as interpreter
 
-The development setup creates a shared virtual environment in `./.venv/` that both your IDE and Docker container can access, eliminating dependency duplication.
+The development setup creates a virtual environment in `./.venv/` that your IDE can access for proper IntelliSense and debugging.
 
-### Production Setup
-
-For production deployment with frozen dependencies:
-
-1. **Build and run:**
-
-   ```bash
-   docker compose up --build
-   ```
-
-### Verification
+### Alternative: Using Make Commands
 
 ```bash
-# Development
-docker compose -f docker-compose.dev.yml run --rm nichebench-dev poetry run nichebench --help
+# Setup and enter shell
+make setup
+make dev-shell
 
-# Production  
-docker compose run --rm nichebench nichebench --help
+# Or run commands directly
+make run-help
+make test
+make format
 ```
 
 ### Basic Usage
 
 ```bash
-# Development commands (with shared .venv)
-docker compose -f docker-compose.dev.yml run --rm nichebench-dev poetry run nichebench list-tasks
+# List available tasks
+nichebench list-tasks
 docker compose -f docker-compose.dev.yml run --rm nichebench-dev poetry run nichebench run drupal_module_quiz --model "gpt-3.5-turbo"
 
 # Production commands
@@ -118,7 +116,7 @@ NicheBench uses a **"one-venv-for-everything"** pattern that eliminates dependen
 ### Key Benefits
 
 - **No duplication:** Only one 15GB virtual environment on disk
-- **IDE integration:** Your editor sees the exact same dependencies Docker uses  
+- **IDE integration:** Your editor sees the exact same dependencies Docker uses
 - **Fast iteration:** Changes to code are immediately visible in container
 - **Production ready:** Frozen, reproducible builds for deployment
 
@@ -144,7 +142,7 @@ The trick: **Never layer a bind-mount on top of something already in the image.*
 ```text
 .
 ├── .github/                    # GitHub workflows and documentation
-├── docker-compose.yml          # Production orchestration  
+├── docker-compose.yml          # Production orchestration
 ├── docker-compose.dev.yml      # Development orchestration
 ├── .venv/                      # Shared virtual environment
 └── nichebench/                 # Python service (self-contained)
@@ -234,11 +232,11 @@ class MyFrameworkTask(NicheBenchTask):
             task_name="my_framework_task",
             dataset_name="nichebench/my-framework-dataset"
         )
-    
+
     def get_prompt(self, line: Dict) -> str:
         # Implementation here
         pass
-    
+
     @property
     def checklist(self) -> List[str]:
         return ["item1", "item2", "item3"]
@@ -257,23 +255,18 @@ class MyFrameworkTask(NicheBenchTask):
 We use pre-commit hooks to ensure code quality:
 
 - **Black** for code formatting
-- **isort** for import sorting  
+- **isort** for import sorting
 - **flake8** for linting
 - **mypy** for type checking
 - **Conventional commits** for commit message format
 
-## Roadmap
+## Status: DONE ✅
 
-### Current Priorities (v0.1.0)
-
-- [x] ✅ Basic CLI structure with Typer
-- [x] ✅ Task and metric abstractions
-- [x] ✅ Example Drupal and WordPress tasks
-- [x] ✅ Docker development environment
-- [x] ✅ Python-native tooling (pre-commit)
-- [ ] 🔄 LightEval integration
-- [ ] 🔄 Hugging Face dataset loading
-- [ ] 🔄 Basic checklist evaluation
+- [x] **CLI Framework** - Typer-based CLI with rich output, working commands
+- [x] **Poetry Setup** - Local development with virtual environment
+- [x] **LightEval Integration** - Task configuration and metric system working
+- [x] **Basic Task Structure** - Drupal and WordPress task placeholders
+- [x] **Development Environment** - Setup script, Makefile, pre-commit hooks
 
 ### Future Versions
 
