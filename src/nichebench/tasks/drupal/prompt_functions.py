@@ -1,11 +1,9 @@
-"""
-Prompt functions for Drupal tasks following LightEval conventions.
-"""
+"""Prompt functions for Drupal-specific tasks in NicheBench."""
 
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from lighteval.tasks.lighteval_task import Doc
+from lighteval.tasks.requests import Doc
 
 
 def load_system_prompt(prompt_file: str) -> str:
@@ -20,105 +18,135 @@ def load_system_prompt(prompt_file: str) -> str:
 
 
 def drupal_quiz_prompt(line: Dict[str, Any], task_name: Optional[str] = None) -> Doc:
-    """Prompt function for Drupal quiz questions with multiple choice answers."""
+    """
+    Create a prompt for Drupal quiz questions.
+
+    Args:
+        line: Data line containing quiz information
+        task_name: Name of the task
+
+    Returns:
+        Doc: Formatted document for evaluation
+    """
+    # Load system prompt
     system_prompt = load_system_prompt("quiz.txt")
 
-    # Extract data from the dataset line
-    context = line.get("context", "")
-    summary = line.get("summary", "")
-    question = line.get("question", "")
-    choices = line.get("choices", "")
+    # Format the question with choices
+    query = f"{system_prompt}\n\nQuestion: {line['prompt']}\n\n"
 
-    # Build the full prompt
-    prompt_parts = [system_prompt]
+    # Add choices if present
+    if "choices" in line:
+        for i, choice in enumerate(line["choices"]):
+            query += f"{choice}\n"
 
-    if context:
-        prompt_parts.append(f"Context: {context}")
+    query += "\nAnswer:"
 
-    if summary:
-        prompt_parts.append(f"Summary: {summary}")
+    # Create Doc object
+    if "choices" in line:
+        # Multiple choice format
+        doc = Doc(
+            task_name=task_name,
+            query=query,
+            choices=line["choices"],
+            gold_index=line["gold_index"],
+            specific={
+                "id": line.get("id", ""),
+                "context": line.get("context", ""),
+                "checklist": line.get("checklist", []),
+                "reference": line.get("reference", ""),
+            },
+        )
+    else:
+        # Open-ended format
+        doc = Doc(
+            task_name=task_name,
+            query=query,
+            gold_index=0,
+            specific={
+                "id": line.get("id", ""),
+                "context": line.get("context", ""),
+                "checklist": line.get("checklist", []),
+                "reference": line.get("reference", ""),
+            },
+        )
+        doc._golds = [line.get("reference", "")]
 
-    prompt_parts.append(f"Question: {question}")
-
-    if choices:
-        prompt_parts.append(f"Choices:\n{choices}")
-
-    prompt_parts.append("Answer: ")
-
-    full_prompt = "\n\n".join(prompt_parts)
-
-    return Doc(
-        task_name=task_name,
-        query=full_prompt,
-        choices=[""],  # For generative tasks
-        gold_index=0,
-        instruction="",
-    )
+    return doc
 
 
 def drupal_code_generation_prompt(
     line: Dict[str, Any], task_name: Optional[str] = None
 ) -> Doc:
-    """Prompt function for Drupal code generation tasks."""
+    """
+    Create a prompt for Drupal code generation tasks.
+
+    Args:
+        line: Data line containing code generation task
+        task_name: Name of the task
+
+    Returns:
+        Doc: Formatted document for evaluation
+    """
+    # Load system prompt
     system_prompt = load_system_prompt("code_generation.txt")
 
-    # Extract data from the dataset line
-    context = line.get("context", "")
-    summary = line.get("summary", "")
-    task_description = line.get("task", line.get("question", ""))
-
-    # Build the full prompt
-    prompt_parts = [system_prompt]
-
-    if context:
-        prompt_parts.append(f"Context: {context}")
-
-    if summary:
-        prompt_parts.append(f"Summary: {summary}")
-
-    prompt_parts.append(f"Task: {task_description}")
-    prompt_parts.append("Please implement the complete solution:")
-
-    full_prompt = "\n\n".join(prompt_parts)
-
-    return Doc(
-        task_name=task_name,
-        query=full_prompt,
-        choices=[""],  # For generative tasks
-        gold_index=0,
-        instruction="",
+    # Format the prompt
+    query = (
+        f"{system_prompt}\n\nTask: {line['prompt']}\n\n"
+        "Provide your complete code solution:"
     )
+
+    # Create Doc object
+    doc = Doc(
+        task_name=task_name,
+        query=query,
+        gold_index=0,
+        specific={
+            "id": line.get("id", ""),
+            "context": line.get("context", ""),
+            "checklist": line.get("checklist", []),
+            "reference": line.get("reference", ""),
+        },
+    )
+    doc._golds = [line.get("reference", "")]
+
+    return doc
 
 
 def drupal_bug_fixing_prompt(
     line: Dict[str, Any], task_name: Optional[str] = None
 ) -> Doc:
-    """Prompt function for Drupal bug fixing tasks."""
+    """
+    Create a prompt for Drupal bug fixing tasks.
+
+    Args:
+        line: Data line containing bug fixing task
+        task_name: Name of the task
+
+    Returns:
+        Doc: Formatted document for evaluation
+    """
+    # Load system prompt
     system_prompt = load_system_prompt("bug_fixing.txt")
 
-    # Extract data from the dataset line
-    context = line.get("context", "")
-    summary = line.get("summary", "")
-    task_description = line.get("task", line.get("question", ""))
-
-    # Build the full prompt
-    prompt_parts = [system_prompt]
-
-    if context:
-        prompt_parts.append(f"Context: {context}")
-
-    if summary:
-        prompt_parts.append(f"Summary: {summary}")
-
-    prompt_parts.append(f"Problem: {task_description}")
-    prompt_parts.append("Please provide the complete fix:")
-
-    full_prompt = "\n\n".join(prompt_parts)
-
-    return Doc(
-        task_name=task_name,
-        query=full_prompt,
-        choices=[""],  # For generative tasks
-        gold_index=0,
-        instruction="",
+    # Format the prompt
+    query = (
+        f"{system_prompt}\n\nProblem: {line['prompt']}\n\n"
+        "Provide the corrected code:"
     )
+
+    # Create Doc object
+    doc = Doc(
+        task_name=task_name,
+        query=query,
+        gold_index=0,
+        specific={
+            "id": line.get("id", ""),
+            "context": line.get("context", ""),
+            "checklist": line.get("checklist", []),
+            "reference": line.get("reference", ""),
+        },
+    )
+    doc._golds = [line.get("reference", "")]
+
+    return doc

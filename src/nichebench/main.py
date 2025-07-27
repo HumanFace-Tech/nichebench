@@ -12,7 +12,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from nichebench.tasks import (
-    get_available_tasks,
+    TASK_REGISTRY,
+    get_available_frameworks,
     get_tasks_by_category,
     get_tasks_by_framework,
 )
@@ -94,7 +95,11 @@ def interactive_task_selection(
         tasks = get_tasks_by_category(framework, category_key)
     else:
         # No framework specified, select framework first
-        frameworks = ["drupal", "wordpress"]
+        frameworks = get_available_frameworks()
+        if not frameworks:
+            console.print("[red]No frameworks found! Please add framework tasks.[/red]")
+            raise typer.Exit(1)
+
         framework = questionary.select("Select framework:", choices=frameworks).ask()
 
         if not framework:
@@ -142,69 +147,9 @@ def run_lighteval_command(
 
 
 @app.command()
-def drupal(
-    category: str = typer.Option("all", help="Category: all, quiz, code"),
-    provider: Optional[str] = typer.Option(None, help="AI provider"),
-    model: Optional[str] = typer.Option(None, help="Model name"),
-    parallel: int = typer.Option(1, help="Parallel jobs"),
-    output_dir: str = typer.Option("./results", help="Output directory"),
-) -> None:
-    """Run Drupal framework tasks."""
-    console.print(
-        Panel(
-            f"[bold blue]NicheBench - Drupal Tasks[/bold blue]\n"
-            f"Category: [cyan]{category}[/cyan]",
-            title="Framework Benchmark",
-        )
-    )
-
-    # Get tasks for the specified category
-    tasks = get_tasks_by_category("drupal", category)
-    if not tasks:
-        console.print(f"[red]No tasks found for category '{category}'[/red]")
-        raise typer.Exit(1)
-
-    # Get provider and model (interactive if not specified)
-    if not provider or not model:
-        provider, model = interactive_provider_model_selection()
-
-    run_lighteval_command(tasks, provider, model, parallel, output_dir)
-
-
-@app.command()
-def wordpress(
-    category: str = typer.Option("all", help="Category: all, quiz, code"),
-    provider: Optional[str] = typer.Option(None, help="AI provider"),
-    model: Optional[str] = typer.Option(None, help="Model name"),
-    parallel: int = typer.Option(1, help="Parallel jobs"),
-    output_dir: str = typer.Option("./results", help="Output directory"),
-) -> None:
-    """Run WordPress framework tasks."""
-    console.print(
-        Panel(
-            f"[bold blue]NicheBench - WordPress Tasks[/bold blue]\n"
-            f"Category: [cyan]{category}[/cyan]",
-            title="Framework Benchmark",
-        )
-    )
-
-    # Get tasks for the specified category
-    tasks = get_tasks_by_category("wordpress", category)
-    if not tasks:
-        console.print(f"[red]No tasks found for category '{category}'[/red]")
-        raise typer.Exit(1)
-
-    # Get provider and model (interactive if not specified)
-    if not provider or not model:
-        provider, model = interactive_provider_model_selection()
-
-    run_lighteval_command(tasks, provider, model, parallel, output_dir)
-
-
-@app.command()
 def run(
     framework: Optional[str] = typer.Argument(
-        None, help="Framework to test (drupal, wordpress)"
+        None, help="Framework to test (use 'list-tasks' to see available frameworks)"
     ),
     provider: Optional[str] = typer.Option(None, help="AI provider"),
     model: Optional[str] = typer.Option(None, help="Model name"),
@@ -240,16 +185,28 @@ def list_tasks() -> None:
     table.add_column("Task Name", style="cyan")
     table.add_column("Category", style="green")
 
-    drupal_tasks = get_tasks_by_framework("drupal")
-    wordpress_tasks = get_tasks_by_framework("wordpress")
+    # Auto-discover all frameworks and their tasks
+    frameworks = get_available_frameworks()
 
-    for task in drupal_tasks:
-        category = "Quiz" if "quiz" in task else "Code Generation"
-        table.add_row("Drupal", task, category)
+    if not frameworks:
+        console.print("[red]No frameworks found! Please add framework tasks.[/red]")
+        return
 
-    for task in wordpress_tasks:
-        category = "Quiz" if "quiz" in task else "Code Generation"
-        table.add_row("WordPress", task, category)
+    for framework in frameworks:
+        framework_tasks = get_tasks_by_framework(framework)
+
+        for task in framework_tasks:
+            # Infer category from task name
+            if "quiz" in task.lower():
+                category = "Quiz"
+            elif "code" in task.lower() or "generation" in task.lower():
+                category = "Code Generation"
+            elif "bug" in task.lower() or "fix" in task.lower():
+                category = "Bug Fixing"
+            else:
+                category = "Other"
+
+            table.add_row(framework.title(), task, category)
 
     console.print(table)
 

@@ -7,13 +7,14 @@ This file contains evergreen guidance for all AI copilots interacting with the N
 ## 1. Project Overview
 
 * **Name:** NicheBench
-* **Goal:** Provide a LightEval‑powered CLI framework to benchmark AI models on framework‑specific tasks (e.g., Drupal 10/11 modules, WordPress plugins, debugging scenarios, quizzes).
+* **Goal:** Provide a LightEval‑powered CLI framework to benchmark AI models on framework‑specific tasks (e.g., Drupal 10/11 modules, debugging scenarios, quizzes).
 * **Key Features:**
 
   * Quiz tasks, code‑generation tasks, bug‑fix tasks, each with custom metadata and checklist‑based scoring.
+  * Auto-discovery framework system - add new frameworks by simply creating a tasks subdirectory.
   * High‑throughput parallel inference via `--num-procs`.
-  * Versioned, gated datasets hosted on Hugging Face Hub.
-  * Results pushed to HF Hub leaderboards.
+  * Dynamic framework detection and CLI generation.
+  * Hardcoded sample data for rapid prototyping and development.
 
 ## 2. Repository Structure
 
@@ -38,12 +39,17 @@ This file contains evergreen guidance for all AI copilots interacting with the N
 │       ├── __init__.py
 │       ├── __main__.py          # Entry point for python -m nichebench
 │       ├── main.py              # CLI entry point with Typer
-│       ├── tasks/               # Framework-specific task definitions
-│       │   ├── __init__.py
-│       │   ├── drupal/
-│       │   └── wordpress/
+│       ├── tasks/               # Framework-specific task definitions (auto-discovered)
+│       │   ├── __init__.py      # Auto-discovery framework loader
+│       │   ├── data_loader.py   # Hardcoded sample data utilities
+│       │   └── drupal/          # Example framework (auto-discovered)
+│       │       ├── __init__.py
+│       │       ├── tasks.py
+│       │       ├── prompt_functions.py
+│       │       └── system_prompts/
 │       └── metrics/             # Custom evaluation metrics
-│           └── __init__.py
+│           ├── __init__.py
+│           └── checklist.py     # Dynamic checklist evaluation
 └── tests/                       # Test files
 
 ## 3. Workflow Standards
@@ -56,6 +62,7 @@ This file contains evergreen guidance for all AI copilots interacting with the N
    * Follow PEP8 and project's `pyproject.toml` formatting rules.
    * Use `rich` for all CLI output (progress bars, tables).
    * Leverage LightEval abstractions (`Task`, `Metric`)—avoid reinventing the registry or parallelism.
+   * Use *POETRY* to run commands (poetry run, etc.)
 
 3. **Development Workflow:**
    * Use `./setup.sh` to set up the local development environment
@@ -97,7 +104,12 @@ This file contains evergreen guidance for all AI copilots interacting with the N
 
 * **Session Closure:**
 
-  * Upon user confirmation that a session's deliverables are done, update `README.md` before tagging.
+  * Upon user confirmation that a session's deliverables are done - this requires some steps to take place:
+  - **Update `.github/copilot-instructions.md` first - THIS MIGHT NOT BE NEEDED.**
+  - **Update `README.md` second - THIS ALSO, might not be needed.**
+  - **Before committing, run: git status, precommit (!important!), etc to make sure all is good and fixed**
+  - **Only now, once everything is fixed - you can add / commit / push**
+
 
 ## 6. Dependencies & Integration
 

@@ -11,20 +11,20 @@
 NicheBench provides a comprehensive benchmarking framework for evaluating AI models on framework-specific tasks such as:
 
 - **Drupal 10/11** module development
-- **WordPress** plugin creation
 - **Code debugging** scenarios
 - **Technical quizzes** and knowledge assessments
 
-Built on top of [LightEval](https://github.com/huggingface/lighteval), NicheBench leverages high-throughput parallel inference, versioned datasets on Hugging Face Hub, and checklist-based scoring systems.
+Built on top of [LightEval](https://github.com/huggingface/lighteval), NicheBench leverages high-throughput parallel inference, hardcoded sample data for development, and checklist-based scoring systems.
 
 ## Key Features
 
 - 🚀 **High-throughput parallel inference** via `--num-procs`
 - 📊 **Checklist-based evaluation** with custom scoring metrics
-- 🤗 **Hugging Face integration** for datasets and model leaderboards
+- 🔄 **Auto-discovery framework system** - add new frameworks by simply creating task subdirectories
 - 🐳 **Docker support** for consistent environments
 - 🔧 **Extensible task system** for adding new frameworks
 - 📈 **Rich CLI output** with progress bars and tables
+- 💾 **Hardcoded sample data** for rapid prototyping and development
 
 ## Quick Start
 
@@ -161,10 +161,11 @@ The trick: **Never layer a bind-mount on top of something already in the image.*
 
 | Task | Framework | Type | Description |
 |------|-----------|------|-------------|
-| `drupal_module_quiz` | Drupal 10/11 | Quiz | Knowledge assessment for Drupal development |
-| `drupal_code_gen` | Drupal 10/11 | Code Generation | Generate working Drupal modules |
-| `wordpress_plugin_quiz` | WordPress | Quiz | WordPress plugin development quiz |
-| `wordpress_plugin_gen` | WordPress | Code Generation | Generate WordPress plugins |
+| `nichebench_drupal_quiz` | Drupal 10/11 | Quiz | Knowledge assessment for Drupal development |
+| `nichebench_drupal_code_generation` | Drupal 10/11 | Code Generation | Generate working Drupal modules |
+| `nichebench_drupal_bug_fixing` | Drupal 10/11 | Bug Fixing | Fix broken Drupal code and patterns |
+
+*Note: Additional frameworks can be added by simply creating new subdirectories in `src/nichebench/tasks/` with their task definitions.*
 
 ## Development
 
@@ -265,7 +266,9 @@ We use pre-commit hooks to ensure code quality:
 - [x] **CLI Framework** - Typer-based CLI with rich output, working commands
 - [x] **Poetry Setup** - Local development with virtual environment
 - [x] **LightEval Integration** - Task configuration and metric system working
-- [x] **Basic Task Structure** - Drupal and WordPress task placeholders
+- [x] **Auto-Discovery Framework System** - Dynamic framework detection and loading
+- [x] **Hardcoded Sample Data** - Development-ready tasks with checklist-based evaluation
+- [x] **Dynamic Metrics** - Custom checklist evaluation using LightEval extensions
 - [x] **Development Environment** - Setup script, Makefile, pre-commit hooks
 
 ### Future Versions

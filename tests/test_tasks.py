@@ -20,14 +20,16 @@ def test_task_registry() -> None:
 def test_drupal_task_instantiation() -> None:
     """Test Drupal task configurations exist."""
     # Test that drupal tasks are in registry
-    drupal_tasks = [t for t in TASK_REGISTRY.keys() if "drupal" in t.lower()]
+    task_names = [t.name for t in TASK_REGISTRY if hasattr(t, "name")]
+    drupal_tasks = [t for t in task_names if "drupal" in t.lower()]
     assert len(drupal_tasks) > 0
 
 
 def test_wordpress_task_instantiation() -> None:
     """Test WordPress task configurations exist."""
     # Test that wordpress tasks are in registry
-    wordpress_tasks = [t for t in TASK_REGISTRY.keys() if "wordpress" in t.lower()]
+    task_names = [t.name for t in TASK_REGISTRY if hasattr(t, "name")]
+    wordpress_tasks = [t for t in task_names if "wordpress" in t.lower()]
     assert len(wordpress_tasks) > 0
 
 
