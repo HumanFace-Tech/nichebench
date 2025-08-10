@@ -6,6 +6,7 @@ authors = ["Nikro"]
 packages = [{include = "nichebench", from = "src"}]
 include = [
     "src/nichebench/tasks/*/system_prompts/*.txt",
+  "src/nichebench/tasks/*/data/**/*.yaml",
 ]
 
 [tool.poetry.dependencies]
@@ -22,6 +23,7 @@ isort = "^5.0.0"
 flake8 = "^6.0.0"
 mypy = "^1.0.0"
 pre-commit = "^3.0.0"
+types-pyyaml = "^6.0.12.20250809"
 
 [tool.poetry.scripts]
 nichebench = "nichebench.main:app"

@@ -14,7 +14,6 @@ def test_task_registry() -> None:
     assert len(available_tasks) > 0
     # Test with the actual task names from our configurations
     assert any("drupal" in task.lower() for task in available_tasks)
-    assert any("wordpress" in task.lower() for task in available_tasks)
 
 
 def test_drupal_task_instantiation() -> None:
@@ -25,12 +24,10 @@ def test_drupal_task_instantiation() -> None:
     assert len(drupal_tasks) > 0
 
 
-def test_wordpress_task_instantiation() -> None:
-    """Test WordPress task configurations exist."""
-    # Test that wordpress tasks are in registry
+def test_no_wordpress_tasks_present() -> None:
+    """Ensure WordPress tasks are not present for initial Drupal-only focus."""
     task_names = [t.name for t in TASK_REGISTRY if hasattr(t, "name")]
-    wordpress_tasks = [t for t in task_names if "wordpress" in t.lower()]
-    assert len(wordpress_tasks) > 0
+    assert all("wordpress" not in t.lower() for t in task_names)
 
 
 def test_task_prompt_generation() -> None:

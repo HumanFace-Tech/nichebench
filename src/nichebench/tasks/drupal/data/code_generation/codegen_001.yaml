@@ -1,0 +1,42 @@
+id: drupal_code_001
+context: |
+  Project: "SeaQuill"
+  Stack:
+    - Drupal: 11.2.x (standard profile installed; no contrib)
+    - PHP: 8.2 with opcache, intl, mbstring, json, curl
+    - DB: MySQL/Percona 8.0 in prod; SQLite 3.45 locally
+    - Composer-based; config sync dir: ../config/sync
+    - PHPUnit 10 in CI; HTML output enabled via HtmlOutputLogger (<extensions>)
+    - Node.js 20 LTS used only for core JS dev tasks in CI (site does not ship custom JS build)
+  Caching & perf:
+    - Dynamic Page Cache and Page Cache enabled
+    - Reverse proxy present in prod; respect cache contexts/tags/max-age
+  Business background:
+    - Editors need a time-bound "Preview Unpublished" capability granted temporarily during a configured window.
+    - Security team forbids modifying user roles/permissions at runtime.
+    - Feature must be toggleable via an admin UI, with defaults provided on install.
+  Repo hints (existing structure):
+    web/modules/custom/  # empty — create a module here
+  Acceptance notes:
+    - Must integrate with caching correctly (no per-request user mutation).
+    - Easy to QA via a demo route that shows whether current user has the dynamic capability.
+summary: Implement a dynamic permission using Access Policy + a custom cache context with admin-configurable window.
+prompt: |
+  Create a custom module that grants a site-wide, *request-scoped* capability named
+  "preview.unpublished.dynamic" only when:
+    1) The feature is enabled in configuration, and
+    2) The current request time is within a configured start/end window.
+  Do NOT alter user roles or mutate $account. Ensure page/dynamic cache correctness by varying
+  cacheability where appropriate. Provide an admin settings page to control enable/start/end, and
+  a small demo route under /admin demonstrating the effective permission. Include automated tests.
+judge_checklist:
+  - "Implements an Access Policy (final class, tagged as access_policy) that grants a synthetic permission based on configuration and time window"
+  - "Provides a custom Cache Context service; all permission-dependent responses vary by that context (verify via cacheability headers)"
+  - "No mutation of the AccountInterface object; no ad-hoc $account->addPermission() or role edits"
+  - "Admin configuration UI present (ConfigFormBase) with enable + start/end; persists via typed config schema"
+  - "Installs default configuration for settings (config/install) and defines schema (config/schema)"
+  - "Routes and menu links for settings + a demo controller; controller returns a render array with CacheableMetadata applied"
+  - "Service definitions (services.yml) follow DI best practices; no container calls via Drupal::service() inside methods"
+  - "Strict types, return types, and PSR-12 coding standards; meaningful PHPDoc on classes/methods"
+  - "Functional test (BrowserTestBase) covers allowed/forbidden scenarios across time boundaries and asserts cache contexts in response headers"
+  - "phpunit.xml(.dist) uses HtmlOutputLogger via <extensions> (no deprecated printer/listener wiring)"

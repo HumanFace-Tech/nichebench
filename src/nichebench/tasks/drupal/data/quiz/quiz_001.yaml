@@ -1,0 +1,13 @@
+id: drupal_quiz_001
+context: |
+  You are working on a Drupal 11 site and need to grant a temporary, request-scoped permission
+  based on environment (e.g., only on "Pirate Day") without touching roles or user accounts.
+  Use current APIs that play nicely with caching; avoid any deprecated or per-request mutation tricks.
+summary: Dynamically granting permissions with Drupal 11's Access Policy API.
+question: How should you implement a dynamic permission that's only granted under certain conditions (e.g., Pirate Day) across the site?
+choices:
+  - A) Subscribe to KernelEvents::REQUEST and call $account->addPermission('talk like a pirate') to mutate the current user.
+  - B) Create a final class extending AccessPolicyBase, tag it as access_policy, and vary by a custom cache context service to grant the permission when the condition is met.
+  - C) Declare the permission in permissions.yml and flip it on/off at runtime using a Config override in an event subscriber.
+  - D) Write a custom route access checker that returns AccessResult::allowedIf($is_condition_met) so the permission exists site-wide.
+correct_choice: B

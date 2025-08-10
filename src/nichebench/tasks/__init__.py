@@ -156,6 +156,24 @@ def get_task_categories(framework: str) -> List[str]:
     return sorted(list(categories))
 
 
+def get_task_sample_count(task_name: str) -> int:
+    """Get the number of samples for a specific task."""
+    from pathlib import Path
+
+    # Map task names to framework and category
+    if "drupal_quiz" in task_name:
+        data_dir = Path(__file__).parent / "drupal" / "data" / "quiz"
+        return len(list(data_dir.glob("*.yaml")))
+    elif "drupal_code_generation" in task_name:
+        data_dir = Path(__file__).parent / "drupal" / "data" / "code_generation"
+        return len(list(data_dir.glob("*.yaml")))
+    elif "drupal_bug_fixing" in task_name:
+        data_dir = Path(__file__).parent / "drupal" / "data" / "bug_fixing"
+        return len(list(data_dir.glob("*.yaml")))
+
+    return 0
+
+
 def get_task_config(task_name: str) -> Optional[LightevalTaskConfig]:
     """Get task configuration by name."""
     return TASK_REGISTRY_DICT.get(task_name)

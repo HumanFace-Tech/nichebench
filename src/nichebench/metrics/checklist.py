@@ -6,35 +6,38 @@ from typing import Any, List
 import numpy as np
 from lighteval.metrics.metrics import MetricCategory, MetricUseCase
 from lighteval.metrics.utils.metric_utils import SampleLevelMetric
-from lighteval.tasks.requests import Doc
 
 
-def checklist_accuracy_fn(doc: Doc, model_response: Any) -> float:
+def checklist_accuracy_fn(predictions: List[str], formatted_doc: Any) -> float:
     """
-    Calculate accuracy based on dynamic checklist criteria from dataset.
+    Compute a simple checklist accuracy directly from predictions and a doc-like object.
 
-    The checklist should be stored in doc.specific["checklist"] as a list of strings.
-    Each item represents an evaluation criterion.
+    This function intentionally mirrors the expectations in our unit tests:
+    - predictions: List[str] with the model output (first element is used)
+    - formatted_doc: object carrying a `checklist` attribute (list[str|dict])
 
-    Args:
-        doc: Document containing the checklist in specific field
-        model_response: Model's response to evaluate
-
-    Returns:
-        float: Score between 0.0 and 1.0 representing checklist success rate
+    Returns a float between 0.0 and 1.0 representing the fraction of checklist
+    items satisfied by the prediction text. Empty inputs yield 0.0.
     """
-    if not model_response.text:
+    if not predictions:
         return 0.0
 
-    response_text = model_response.text[0].lower()
+    prediction_text = (predictions[0] or "").lower()
 
-    # Get checklist from doc.specific field
-    if not doc.specific or "checklist" not in doc.specific:
-        # If no checklist available, fall back to simple exact match
-        gold_answer = doc.get_golds()[0] if doc.get_golds() else ""
-        return 1.0 if response_text.strip() == gold_answer.lower().strip() else 0.0
+    # Pull checklist from either attribute or mapping access
+    checklist: list = []
+    if hasattr(formatted_doc, "judge_checklist"):
+        checklist = getattr(formatted_doc, "judge_checklist") or []
+    elif hasattr(formatted_doc, "checklist"):
+        # Fallback for older data format
+        checklist = getattr(formatted_doc, "checklist") or []
+    elif isinstance(formatted_doc, dict):
+        checklist = (
+            formatted_doc.get("judge_checklist", [])
+            or formatted_doc.get("checklist", [])
+            or []
+        )
 
-    checklist = doc.specific["checklist"]
     if not checklist:
         return 0.0
 
@@ -42,34 +45,19 @@ def checklist_accuracy_fn(doc: Doc, model_response: Any) -> float:
     total_criteria = len(checklist)
 
     for criterion in checklist:
-        criterion_lower = criterion.lower()
-
-        # Check if criterion is met based on different patterns
-        is_met = False
-
-        # For "Must" criteria - strict requirement
-        if criterion_lower.startswith("must"):
-            # Extract the key requirement after "must"
-            requirement = (
-                criterion_lower.replace("must ", "").replace("must", "").strip()
-            )
-            is_met = _check_requirement_in_text(requirement, response_text)
-
-        # For "Should" criteria - recommended but not strict
-        elif criterion_lower.startswith("should"):
-            requirement = (
-                criterion_lower.replace("should ", "").replace("should", "").strip()
-            )
-            is_met = _check_requirement_in_text(requirement, response_text)
-
-        # For other criteria, treat as general requirements
+        if isinstance(criterion, str):
+            is_met = _check_requirement_in_text(criterion.lower(), prediction_text)
+        elif isinstance(criterion, dict):
+            # Support simple dict form: {"keyword": "..."}
+            keyword = (criterion.get("keyword") or "").lower()
+            is_met = bool(keyword and keyword in prediction_text)
         else:
-            is_met = _check_requirement_in_text(criterion_lower, response_text)
+            is_met = False
 
         if is_met:
             criteria_met += 1
 
-    return criteria_met / total_criteria if total_criteria > 0 else 0.0
+    return criteria_met / total_criteria if total_criteria else 0.0
 
 
 def _check_requirement_in_text(requirement: str, text: str) -> bool:
@@ -246,7 +234,13 @@ def checklist_accuracy_sample_fn(
     prediction = predictions[0].lower()
 
     # Get checklist from the document metadata
-    checklist = getattr(formatted_doc, "checklist", [])
+    # (try judge_checklist first, then fallback)
+    checklist: list = []
+    if hasattr(formatted_doc, "judge_checklist"):
+        checklist = getattr(formatted_doc, "judge_checklist", [])
+    elif hasattr(formatted_doc, "checklist"):
+        checklist = getattr(formatted_doc, "checklist", [])
+
     if not checklist:
         # Fallback: just check if prediction contains some expected keywords
         return 1.0 if len(prediction.strip()) > 10 else 0.0

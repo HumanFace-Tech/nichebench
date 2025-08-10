@@ -1,5 +1,6 @@
 """Prompt functions for Drupal-specific tasks in NicheBench."""
 
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -32,12 +33,18 @@ def drupal_quiz_prompt(line: Dict[str, Any], task_name: Optional[str] = None) ->
     system_prompt = load_system_prompt("quiz.txt")
 
     # Format the question with choices
-    query = f"{system_prompt}\n\nQuestion: {line['prompt']}\n\n"
+    question_text = line.get("question") or line.get("prompt") or ""
+    query = f"{system_prompt}\n\nQuestion: {question_text}\n\n"
 
     # Add choices if present
     if "choices" in line:
         for i, choice in enumerate(line["choices"]):
-            query += f"{choice}\n"
+            # Ensure choices are labeled (A), (B), etc., if not already
+            label = chr(ord("A") + i)
+            rendered = choice
+            if not re.match(r"^[A-Z]\)", str(choice).strip()):
+                rendered = f"{label}) {choice}"
+            query += f"{rendered}\n"
 
     query += "\nAnswer:"
 
@@ -48,11 +55,10 @@ def drupal_quiz_prompt(line: Dict[str, Any], task_name: Optional[str] = None) ->
             task_name=task_name,
             query=query,
             choices=line["choices"],
-            gold_index=line["gold_index"],
+            gold_index=line.get("gold_index", 0),
             specific={
                 "id": line.get("id", ""),
                 "context": line.get("context", ""),
-                "checklist": line.get("checklist", []),
                 "reference": line.get("reference", ""),
             },
         )
@@ -65,7 +71,6 @@ def drupal_quiz_prompt(line: Dict[str, Any], task_name: Optional[str] = None) ->
             specific={
                 "id": line.get("id", ""),
                 "context": line.get("context", ""),
-                "checklist": line.get("checklist", []),
                 "reference": line.get("reference", ""),
             },
         )
@@ -104,11 +109,10 @@ def drupal_code_generation_prompt(
         specific={
             "id": line.get("id", ""),
             "context": line.get("context", ""),
-            "checklist": line.get("checklist", []),
-            "reference": line.get("reference", ""),
+            "judge_checklist": line.get("judge_checklist", []),
         },
     )
-    doc._golds = [line.get("reference", "")]
+    doc._golds = [""]  # No reference solution for AI judge evaluation
 
     return doc
 
@@ -143,10 +147,9 @@ def drupal_bug_fixing_prompt(
         specific={
             "id": line.get("id", ""),
             "context": line.get("context", ""),
-            "checklist": line.get("checklist", []),
-            "reference": line.get("reference", ""),
+            "judge_checklist": line.get("judge_checklist", []),
         },
     )
-    doc._golds = [line.get("reference", "")]
+    doc._golds = [""]  # No reference solution for AI judge evaluation
 
     return doc

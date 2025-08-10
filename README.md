@@ -19,12 +19,12 @@ Built on top of [LightEval](https://github.com/huggingface/lighteval), NicheBenc
 ## Key Features
 
 - 🚀 **High-throughput parallel inference** via `--num-procs`
-- 📊 **Checklist-based evaluation** with custom scoring metrics
+- 🧠 **AI Judge Evaluation System** - No regex! Pure AI-based scoring with expert judge prompts
 - 🔄 **Auto-discovery framework system** - add new frameworks by simply creating task subdirectories
 - 🐳 **Docker support** for consistent environments
 - 🔧 **Extensible task system** for adding new frameworks
 - 📈 **Rich CLI output** with progress bars and tables
-- 💾 **Hardcoded sample data** for rapid prototyping and development
+- 💾 **YAML-based sample data** for rapid prototyping and development
 
 ## Quick Start
 
@@ -89,13 +89,15 @@ make format
 ### Basic Usage
 
 ```bash
-# List available tasks
+# List available tasks (Drupal only for initial MVP)
 nichebench list-tasks
-docker compose -f docker-compose.dev.yml run --rm nichebench-dev poetry run nichebench run drupal_module_quiz --model "gpt-3.5-turbo"
+
+# Example: run the Drupal module quiz task with your model
+docker compose -f docker-compose.dev.yml run --rm nichebench-dev poetry run nichebench run nichebench_drupal_quiz --model "gpt-3.5-turbo"
 
 # Production commands
 docker compose run --rm nichebench nichebench list-tasks
-docker compose run --rm nichebench nichebench run drupal_module_quiz --model "gpt-3.5-turbo"
+docker compose run --rm nichebench nichebench run nichebench_drupal_quiz --model "gpt-3.5-turbo"
 ```
 
 ## Docker Architecture
@@ -157,13 +159,65 @@ The trick: **Never layer a bind-mount on top of something already in the image.*
             └── metrics/        # Custom evaluation metrics
 ```
 
-## Available Tasks
+## Available Tasks (Drupal focus)
 
-| Task | Framework | Type | Description |
-|------|-----------|------|-------------|
-| `nichebench_drupal_quiz` | Drupal 10/11 | Quiz | Knowledge assessment for Drupal development |
-| `nichebench_drupal_code_generation` | Drupal 10/11 | Code Generation | Generate working Drupal modules |
-| `nichebench_drupal_bug_fixing` | Drupal 10/11 | Bug Fixing | Fix broken Drupal code and patterns |
+| Task | Framework | Type | Description | Evaluation Method |
+|------|-----------|------|-------------|-------------------|
+| `nichebench_drupal_quiz` | Drupal 10/11 | Quiz | Multiple-choice questions; model chooses answer via log-likelihood | **LightEval built-in accuracy** (boolean: correct choice or not) |
+| `nichebench_drupal_code_generation` | Drupal 10/11 | Code Generation | Generate working Drupal modules | **AI Judge evaluation** with expert Drupal judge prompt + hidden checklist (0-100 score) |
+| `nichebench_drupal_bug_fixing` | Drupal 10/11 | Bug Fixing | Fix broken Drupal code and patterns | **AI Judge evaluation** with expert Drupal judge prompt + hidden checklist (0-100 score) |
+
+## Evaluation Architecture
+
+NicheBench uses a **two-AI system** for evaluation:
+
+### Quiz Tasks (Multiple Choice)
+
+- **Test AI "A"**: Gets question + choices → selects answer via log-likelihood
+- **Evaluation**: LightEval's built-in `loglikelihood_acc` metric (boolean: correct/incorrect)
+- **No Judge AI needed** - deterministic scoring
+
+### Generative Tasks (Code/Bug-fixing)
+
+- **Test AI "A"**: Gets context + task prompt → generates code solution
+- **Judge AI "J"**: Gets context + task + A's solution + **hidden evaluation checklist** → scores 0-100
+- **Key principle**: NO REGEX/STRING MATCHING! Pure AI intelligence for evaluation
+
+### YAML Structure
+
+```yaml
+# Quiz task
+id: drupal_quiz_001
+context: "Drupal 11 development context..."
+question: "How do you create a custom block?"
+choices: ["A) hook_block_info", "B) Extend BlockBase", ...]
+correct_choice: B
+
+# Code generation task
+id: drupal_code_001
+context: "Drupal 11 module development..."
+prompt: "Create a custom block plugin that displays user stats"
+judge_checklist:  # HIDDEN from test AI, shown only to judge AI
+  - "Extends BlockBase class (Critical - 20 points)"
+  - "Uses @Block annotation with proper ID and label (Important - 15 points)"
+  - "Implements build() method returning render array (Critical - 20 points)"
+  - "Proper namespace and use statements (Medium - 10 points)"
+  - "Follows Drupal 11 coding standards (Medium - 10 points)"
+  - "Includes proper PHPDoc documentation (Low - 5 points)"
+  - "Error handling for edge cases (Medium - 10 points)"
+  - "Uses dependency injection when appropriate (Medium - 10 points)"
+```
+
+### Judge AI Prompt (Expert-Level)
+
+For coding tasks, the Judge AI gets a **specialized Drupal expert prompt** that:
+
+- Reviews each checklist item systematically
+- Considers item importance/weight
+- Provides holistic 0-100 score with reasoning
+- Uses deep Drupal 11 knowledge for assessment
+
+**Example Judge Response**: *"Checklist analysis: ✓ Extends BlockBase (20/20), ✓ @Block annotation (15/15), ✓ build() method (20/20), ✗ Missing namespace (0/10), ✓ Coding standards (10/10), ✗ No PHPDoc (0/5), ✓ Error handling (10/10), ✓ DI used (10/10). Final score: 85/100 - solid implementation with minor documentation gaps."*
 
 *Note: Additional frameworks can be added by simply creating new subdirectories in `src/nichebench/tasks/` with their task definitions.*
 
@@ -271,6 +325,54 @@ We use pre-commit hooks to ensure code quality:
 - [x] **Dynamic Metrics** - Custom checklist evaluation using LightEval extensions
 - [x] **Development Environment** - Setup script, Makefile, pre-commit hooks
 
+## Work Plan
+
+### What Was Done
+
+- Core CLI and auto-discovery in place
+- Drupal tasks implemented (quiz, code generation, bug fixing)
+- Checklist metric wired and tested
+- Local sample data for development
+- CI runs linting and tests on push
+
+### Today (1–2 hours)
+
+- Remove WordPress references and stabilize Drupal-only scope
+- Tighten tests to reflect Drupal focus and ensure green
+- Document evaluation modes for Drupal:
+  - Quiz: single-choice answer, judged True/False
+  - Code/Debug: checklist-based scoring (weights + critical checks placeholder)
+- Add README sections for plan (today/tomorrow/backlog)
+
+### Tomorrow (4–8 hours)
+
+- Expand Drupal dataset stubs: add 5–10 quiz items, 3–5 code-gen, 3–5 bug-fix examples
+- Implement lightweight judge prompts for:
+  - Quiz validation (answer correctness)
+  - Checklist evaluation (support weighted and critical items)
+- Enhance metrics interface to accept weights and critical flags, aggregate into 0–100 score
+- Add CLI flags for exporting run results to JSON
+- Improve CLI help and `list-tasks --json`
+
+### Backlog (Prioritized)
+
+1) Drupal breadth and quality
+    - Grow to 20 quizzes + 20 code-gen/bug-fix (curated, labeled)
+    - Vague-to-specific checklists aligned with Drupal standards (annotations, routes, config, hooks, DI, tests, docs)
+2) Metric sophistication
+    - Composite scoring (checklist success rate + judge override)
+    - Critical item penalty logic
+3) Results & UX
+    - Result schema + local aggregation into Markdown table
+    - `--output-dir` and run manifest with seed/config
+4) CI hygiene
+    - Keep simple: lint, mypy, tests on Py3.10; cache Poetry
+5) Docs
+    - DATASETS.md (later, when moving to HF datasets)
+    - CONTRIBUTING guide (later)
+
+Note: We’re focusing exclusively on Drupal until the MVP is proven; other frameworks are out of scope for now.
+
 ### Future Versions
 
 - [ ] 📅 Additional framework support (Svelte, Laravel, etc.)
@@ -288,4 +390,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Built on top of [LightEval](https://github.com/huggingface/lighteval)
 - Inspired by framework-specific AI evaluation needs
 - Community feedback and contributions
-# nichebench

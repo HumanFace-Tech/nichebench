@@ -71,7 +71,6 @@ nichebench/
 │       ├── main.py              # CLI application with Typer
 │       ├── tasks/               # Framework-specific tasks
 │       │   ├── drupal/
-│       │   └── wordpress/
 │       └── metrics/             # Custom evaluation metrics
 ├── tests/                       # Test files
 ├── .venv/                       # Virtual environment (created by Poetry)

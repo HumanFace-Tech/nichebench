@@ -3,6 +3,7 @@ NicheBench CLI - LightEval-powered framework for benchmarking AI models
 on framework-specific tasks.
 """
 
+import subprocess
 from typing import List, Optional
 
 import questionary
@@ -14,6 +15,7 @@ from rich.table import Table
 from nichebench.tasks import (
     TASK_REGISTRY,
     get_available_frameworks,
+    get_task_sample_count,
     get_tasks_by_category,
     get_tasks_by_framework,
 )
@@ -30,22 +32,47 @@ console = Console()
 
 # Provider options for interactive selection
 PROVIDERS = {
-    "openai": "OpenAI (GPT-3.5, GPT-4, etc.)",
-    "anthropic": "Anthropic (Claude)",
-    "together": "Together AI (Llama, Code Llama)",
-    "google": "Google (Gemini)",
-    "local": "Local (Ollama, vLLM)",
+    "openai": "OpenAI (GPT-4o, GPT-5, etc.)",
+    "anthropic": "Anthropic (Claude 4, Claude 3.5 Sonnet)",
+    "google": "Google (Gemini 2.5, Gemini 1.5 Pro/Flash)",
+    "together": "Together AI (Llama 3.1/3.2, CodeLlama)",
+    "groq": "Groq (Fast inference: Llama 3.1, Mixtral)",
+    "local": "Local (Ollama: Llama 3.2, Qwen2.5, Mistral)",
 }
 
 MODELS = {
-    "openai": ["gpt-3.5-turbo", "gpt-4", "gpt-4-turbo"],
-    "anthropic": ["claude-3-sonnet", "claude-3-haiku", "claude-3-opus"],
-    "together": [
-        "meta-llama/Llama-2-70b-chat-hf",
-        "codellama/CodeLlama-34b-Instruct-hf",
+    "openai": ["gpt-4o", "gpt-4o-mini", "gpt-5", "gpt-4-turbo", "o1-pro"],
+    "anthropic": [
+        "claude-opus-4.1",
+        "claude-sonnet-4",
+        "claude-3.5-sonnet",
+        "claude-3.5-haiku",
     ],
-    "google": ["gemini-pro", "gemini-pro-vision"],
-    "local": ["llama2", "codellama", "mistral"],
+    "google": [
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash",
+    ],
+    "together": [
+        "meta-llama/Llama-3.2-90b-vision-instruct",
+        "meta-llama/Llama-3.1-70b-instruct-turbo",
+        "meta-llama/CodeLlama-34b-instruct",
+        "mistralai/Mixtral-8x22B-instruct",
+    ],
+    "groq": [
+        "llama-3.1-70b-versatile",
+        "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it",
+    ],
+    "local": [
+        "llama3.2:3b",
+        "llama3.1:8b",
+        "qwen2.5:7b",
+        "mistral:7b",
+        "codellama:13b",
+    ],
 }
 
 
@@ -112,14 +139,20 @@ def interactive_task_selection(
 
 
 def run_lighteval_command(
-    tasks: List[str], provider: str, model: str, parallel: int, output_dir: str
-) -> None:
-    """Run the actual lighteval command."""
-    # Format tasks for lighteval
-    task_specs = []
-    for task in tasks:
-        task_specs.append(f"nichebench|{task}|0|0")
+    tasks: List[str],
+    provider: str,
+    model: str,
+    parallel: int,
+    output_dir: str,
+    dry_run: bool,
+) -> int:
+    """Build and optionally run the LightEval command.
 
+    Returns process return code (0 on success).
+    In dry-run mode, returns 0 after printing.
+    """
+    # Format tasks for lighteval. The first segment is the suite; we use "community".
+    task_specs = [f"community|{task}|0|0" for task in tasks]
     tasks_arg = ",".join(task_specs)
 
     # Build lighteval command
@@ -130,20 +163,33 @@ def run_lighteval_command(
         f"--tasks={tasks_arg}",
         "--override_batch_size=1",
         f"--output_dir={output_dir}",
-        "--custom_tasks=nichebench.tasks",
+        # Make sure LightEval can import our task table and custom metrics
+        "--custom-tasks=nichebench.tasks",
+        "--custom-metrics=nichebench.metrics",
     ]
 
-    console.print(f"[green]Running:[/green] {' '.join(cmd)}")
-
-    # For now, just show what would be run
-    console.print(
-        "[yellow]Note: LightEval integration is in progress. This would run:[/yellow]"
-    )
+    console.print(f"[green]Prepared command:[/green] {' '.join(cmd)}")
     console.print(f"Tasks: {tasks}")
     console.print(f"Provider: {provider}")
     console.print(f"Model: {model}")
     console.print(f"Parallel: {parallel}")
     console.print(f"Output: {output_dir}")
+
+    if dry_run:
+        console.print(
+            "[yellow]Dry run: not executing lighteval. Use --execute to run.[/yellow]"
+        )
+        return 0
+
+    # Execute the command
+    try:
+        result = subprocess.run(cmd, check=False)
+        return result.returncode
+    except FileNotFoundError:
+        console.print(
+            "[red]Error: 'lighteval' not found in PATH. Is it installed?[/red]"
+        )
+        return 127
 
 
 @app.command()
@@ -155,6 +201,11 @@ def run(
     model: Optional[str] = typer.Option(None, help="Model name"),
     parallel: int = typer.Option(1, help="Parallel jobs"),
     output_dir: str = typer.Option("./results", help="Output directory"),
+    execute: bool = typer.Option(
+        False,
+        "--execute/--dry-run",
+        help="Actually run LightEval (default is dry-run that only prints the command)",
+    ),
 ) -> None:
     """Run tasks interactively or with full specification."""
     if not framework:
@@ -172,7 +223,11 @@ def run(
         if not provider or not model:
             provider, model = interactive_provider_model_selection()
 
-    run_lighteval_command(tasks, provider, model, parallel, output_dir)
+    rc = run_lighteval_command(
+        tasks, provider, model, parallel, output_dir, dry_run=not execute
+    )
+    if rc != 0:
+        raise typer.Exit(rc)
 
 
 @app.command()
@@ -184,6 +239,7 @@ def list_tasks() -> None:
     table.add_column("Framework", style="dim", width=12)
     table.add_column("Task Name", style="cyan")
     table.add_column("Category", style="green")
+    table.add_column("Samples", style="yellow", justify="center", width=8)
 
     # Auto-discover all frameworks and their tasks
     frameworks = get_available_frameworks()
@@ -206,7 +262,10 @@ def list_tasks() -> None:
             else:
                 category = "Other"
 
-            table.add_row(framework.title(), task, category)
+            # Get sample count for this task
+            sample_count = get_task_sample_count(task)
+
+            table.add_row(framework.title(), task, category, str(sample_count))
 
     console.print(table)
 

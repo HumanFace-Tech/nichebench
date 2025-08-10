@@ -1,0 +1,13 @@
+id: drupal_bug_001
+context: |
+  A message is shown when an Article is created, but the implementation uses deprecated APIs.
+summary: Replace deprecated drupal_set_message() usage.
+prompt: |
+  Update the code to use the messenger service when a node of type 'article' is created.
+solution_includes:
+  - Use \Drupal::messenger()->addMessage() or DI alternative
+  - Keep behavior identical otherwise
+checklist:
+  - Must avoid drupal_set_message()
+  - Must work on Drupal 11
+  - Should mention proper service usage

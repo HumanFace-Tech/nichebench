@@ -8,9 +8,11 @@ This file contains evergreen guidance for all AI copilots interacting with the N
 
 * **Name:** NicheBench
 * **Goal:** Provide a LightEval‑powered CLI framework to benchmark AI models on framework‑specific tasks (e.g., Drupal 10/11 modules, debugging scenarios, quizzes).
+* **Current Scope (MVP):** Drupal-only focus. Do not add or reference other frameworks until explicitly requested.
 * **Key Features:**
 
-  * Quiz tasks, code‑generation tasks, bug‑fix tasks, each with custom metadata and checklist‑based scoring.
+  * **AI Judge Evaluation System**: Two-AI architecture where Test AI generates solutions and Judge AI scores 0-100 using expert prompts. NO REGEX/STRING MATCHING - pure AI intelligence only.
+  * Quiz tasks (multiple choice with loglikelihood scoring), code‑generation tasks, bug‑fix tasks with dynamic checklist evaluation.
   * Auto-discovery framework system - add new frameworks by simply creating a tasks subdirectory.
   * High‑throughput parallel inference via `--num-procs`.
   * Dynamic framework detection and CLI generation.
@@ -66,7 +68,7 @@ This file contains evergreen guidance for all AI copilots interacting with the N
 
 3. **Development Workflow:**
    * Use `./setup.sh` to set up the local development environment
-   * Use `poetry shell` to activate the virtual environment
+   * Use `poetry shell` to activate the virtual environment - NEVER raw python commands
    * Use `make` commands for common development tasks
    * Service runs directly on host with Poetry virtual environment
    * Tests are co-located within the project directory
@@ -74,11 +76,14 @@ This file contains evergreen guidance for all AI copilots interacting with the N
 
 4. **Task Definitions:**
    * Every task must define a unique `TASK_NAME`, load its dataset via HF `load_dataset`, and implement `get_prompt(idx)`.
-   * Metadata keys: `context`, `prompt`, `reference`, plus any custom fields (e.g., `checklist`, `docker_image`).
+   * Metadata keys: `context`, `prompt`, `reference`, plus any custom fields (e.g., `judge_checklist`, `docker_image`).
+   * **CRITICAL**: For generative tasks, use `judge_checklist` field containing evaluation criteria for AI judge. NO REGEX matching allowed - only AI-based evaluation.
 
 5. **Metric Implementations:**
    * Subclass LightEval's `Metric` interface.
-   * Return a dict scalar per run (e.g., `{"checklist_success_rate": 0.75}`).
+   * **Quiz tasks**: Use `loglikelihood_acc` for multiple choice (boolean scoring).
+   * **Generative tasks**: Implement AI judge metric that scores 0-100 using expert prompts and hidden checklists.
+   * Return a dict scalar per run (e.g., `{"checklist_success_rate": 0.75}`, `{"ai_judge_score": 85.0}`).
 
 6. **Testing & CI:**
    * Unit‑test all new tasks and metrics in `tests/` (use `pytest`).
