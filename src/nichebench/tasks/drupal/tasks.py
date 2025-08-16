@@ -16,7 +16,7 @@ def quiz_accuracy_fn(
     predictions: List[str], formatted_doc: Doc, **kwargs: Any
 ) -> float:
     """Strict boolean quiz accuracy: 1.0 if choice letter matches gold, else 0.0."""
-    if not predictions or not getattr(formatted_doc, "choices", None):
+    if not predictions:
         return 0.0
     pred_raw = (predictions[0] or "").strip().upper()
     # Extract a single letter A-E from the prediction
@@ -25,15 +25,10 @@ def quiz_accuracy_fn(
     m = re.search(r"[A-E]", pred_raw)
     pred_letter = m.group(0) if m else ""
 
-    # Gold is at gold_index within choices; normalize choice label to its letter
-    try:
-        gold_choice = formatted_doc.choices[formatted_doc.gold_index]
-    except Exception:
-        return 0.0
-    gold_str = str(gold_choice).strip().upper()
-    m2 = re.match(r"^([A-E])\)", gold_str)
-    gold_letter = m2.group(1) if m2 else gold_str[:1] if gold_str[:1] in "ABCDE" else ""
-    return 1.0 if pred_letter and pred_letter == gold_letter else 0.0
+    # Get correct answer from specific dict
+    correct_choice = formatted_doc.specific.get("correct_choice", "A")
+
+    return 1.0 if pred_letter == correct_choice else 0.0
 
 
 def code_quality_fn(predictions: List[str], formatted_doc: Doc, **kwargs: Any) -> float:
@@ -52,8 +47,15 @@ def bug_fixing_fn(predictions: List[str], formatted_doc: Doc, **kwargs: Any) -> 
 
 
 # Define metrics for Drupal tasks
-# Note: For quizzes we prefer LightEval's built-in loglikelihood-based accuracy,
-# which avoids parsing generated answers and yields a boolean correctness.
+# Quiz metric using generative approach for API compatibility
+drupal_quiz_metric = SampleLevelMetric(
+    metric_name="drupal_quiz_accuracy",
+    sample_level_fn=quiz_accuracy_fn,
+    category=MetricCategory.GENERATIVE,  # Changed from MULTICHOICE to GENERATIVE
+    use_case=MetricUseCase.ACCURACY,
+    corpus_level_fn=np.mean,
+    higher_is_better=True,
+)
 
 drupal_code_metric = SampleLevelMetric(
     metric_name="drupal_code_quality",
@@ -74,79 +76,75 @@ drupal_bug_fixing_metric = SampleLevelMetric(
 )
 
 
-# Locate YAML data directory (Drupal)
-_DRUPAL_DATA_DIR = Path(__file__).parent / "data"
-
-
-# Simplified prompt function wrappers - these just delegate to the real implementations
+# Prompt function wrappers for LightEval compatibility
 def drupal_quiz_hardcoded_prompt(line: Dict[str, Any], task_name: str = None) -> Doc:
-    """Prompt function for quiz data - delegates to actual implementation."""
+    """Prompt function for quiz data - works with HuggingFace dataset."""
     from .prompt_functions import drupal_quiz_prompt
 
     return drupal_quiz_prompt(line, task_name)
 
 
 def drupal_code_hardcoded_prompt(line: Dict[str, Any], task_name: str = None) -> Doc:
-    """Prompt function for code generation data - delegates to actual implementation."""
+    """Prompt function for code generation data - works with HuggingFace dataset."""
     from .prompt_functions import drupal_code_generation_prompt
 
     return drupal_code_generation_prompt(line, task_name)
 
 
 def drupal_bug_hardcoded_prompt(line: Dict[str, Any], task_name: str = None) -> Doc:
-    """Prompt function for bug fixing data - delegates to actual implementation."""
+    """Prompt function for bug fixing data - works with HuggingFace dataset."""
     from .prompt_functions import drupal_bug_fixing_prompt
 
     return drupal_bug_fixing_prompt(line, task_name)
 
 
-# Task configurations using hardcoded data
+# Task configurations using local HuggingFace datasets
 drupal_quiz_task = LightevalTaskConfig(
     name="nichebench_drupal_quiz",
     prompt_function=drupal_quiz_hardcoded_prompt,
     suite=["community"],
-    hf_repo="local",  # Use local hardcoded data
+    hf_repo="datasets/drupal_quiz",  # Use parquet loader
     hf_subset="default",
-    hf_avail_splits=["test"],
-    evaluation_splits=["test"],
+    hf_avail_splits=["train"],
+    evaluation_splits=["train"],
     few_shots_split=None,
     few_shots_select=None,
-    metric=[Metrics.loglikelihood_acc],
-    generation_size=-1,  # not generating; using loglikelihood on choices
-    stop_sequence=None,
-    trust_dataset=True,
+    metric=[Metrics.exact_match],
+    generation_size=5,
+    stop_sequence=["\n"],
+    trust_dataset=False,
 )
 
 drupal_code_task = LightevalTaskConfig(
     name="nichebench_drupal_code_generation",
     prompt_function=drupal_code_hardcoded_prompt,
     suite=["community"],
-    hf_repo="local",  # Use local hardcoded data
+    hf_repo="datasets/drupal_code_generation",  # Use parquet loader
     hf_subset="default",
-    hf_avail_splits=["test"],
-    evaluation_splits=["test"],
+    hf_avail_splits=["train"],
+    evaluation_splits=["train"],
     few_shots_split=None,
     few_shots_select=None,
     metric=[drupal_code_metric],
     generation_size=512,
     stop_sequence=["```", "\n\n"],
-    trust_dataset=True,
+    trust_dataset=False,
 )
 
 drupal_bug_task = LightevalTaskConfig(
     name="nichebench_drupal_bug_fixing",
     prompt_function=drupal_bug_hardcoded_prompt,
     suite=["community"],
-    hf_repo="local",  # Use local hardcoded data
+    hf_repo="datasets/drupal_bug_fixing",  # Use parquet loader
     hf_subset="default",
-    hf_avail_splits=["test"],
-    evaluation_splits=["test"],
+    hf_avail_splits=["train"],
+    evaluation_splits=["train"],
     few_shots_split=None,
     few_shots_select=None,
     metric=[drupal_bug_fixing_metric],
     generation_size=512,
     stop_sequence=["```", "\n\n"],
-    trust_dataset=True,
+    trust_dataset=False,
 )
 
 # Export tasks for LightEval discovery

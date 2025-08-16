@@ -145,6 +145,15 @@ models/
 .huggingface/
 logs/
 
+# Local env and sensitive files
+.env.local
+.env.example
+.litellm_cache/
+
+# Generated or helper scripts we don't want in commits
+DATASET_INTEGRATION_NOTES.md
+create_datasets.py
+
 # Docker
 docker-compose.override.yml
 

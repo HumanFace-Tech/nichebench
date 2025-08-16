@@ -20,6 +20,9 @@ from nichebench.tasks import (
     get_tasks_by_framework,
 )
 
+# Load environment variables first
+from . import env_loader  # noqa: F401
+
 app = typer.Typer(
     name="nichebench",
     help=(
@@ -155,25 +158,58 @@ def run_lighteval_command(
     task_specs = [f"community|{task}|0|0" for task in tasks]
     tasks_arg = ",".join(task_specs)
 
-    # Build lighteval command
-    cmd = [
-        "lighteval",
-        "accelerate",
-        f"--model_args=pretrained={model}",
-        f"--tasks={tasks_arg}",
-        "--override_batch_size=1",
-        f"--output_dir={output_dir}",
-        # Make sure LightEval can import our task table and custom metrics
-        "--custom-tasks=nichebench.tasks",
-        "--custom-metrics=nichebench.metrics",
-    ]
+    # Build lighteval command based on provider
+    if provider == "litellm":
+        # Use endpoint litellm for LiteLLM models (GROQ, OpenAI, etc.)
+        if "/" in model:
+            # Extract provider and model name from format like "groq/gemma2-9b-it"
+            actual_provider, clean_model_name = model.split("/", 1)
+            model_args = f"model_name={clean_model_name},provider={actual_provider}"
+        else:
+            # Direct model name
+            model_args = f"model_name={model}"
 
-    console.print(f"[green]Prepared command:[/green] {' '.join(cmd)}")
-    console.print(f"Tasks: {tasks}")
-    console.print(f"Provider: {provider}")
-    console.print(f"Model: {model}")
-    console.print(f"Parallel: {parallel}")
-    console.print(f"Output: {output_dir}")
+        cmd = [
+            "lighteval",
+            "endpoint",
+            "litellm",
+            model_args,
+            tasks_arg,
+            f"--output-dir={output_dir}",
+            "--custom-tasks=nichebench.tasks",
+            "--max-samples=10",  # Limit samples for testing
+        ]
+    elif provider in ["openai", "anthropic", "groq", "together"]:
+        # Use endpoint inference-providers for direct API-based models
+        model_args = f"model_name={model},provider={provider}"
+
+        cmd = [
+            "lighteval",
+            "endpoint",
+            "inference-providers",
+            model_args,
+            tasks_arg,
+            f"--output-dir={output_dir}",
+            "--custom-tasks=nichebench.tasks",
+            "--max-samples=10",  # Limit samples for testing
+        ]
+    else:
+        # Use accelerate for local models
+        cmd = [
+            "lighteval",
+            "accelerate",
+            f"pretrained={model}",
+            tasks_arg,
+            f"--output-dir={output_dir}",
+            "--custom-tasks=nichebench.tasks",
+        ]
+
+    console.print("[green]Prepared command:[/green] " + " ".join(cmd))
+    console.print("Tasks: " + str(tasks))
+    console.print("Provider: " + str(provider))
+    console.print("Model: " + str(model))
+    console.print("Parallel: " + str(parallel))
+    console.print("Output: " + str(output_dir))
 
     if dry_run:
         console.print(

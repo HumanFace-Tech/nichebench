@@ -11,9 +11,10 @@ include = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-lighteval = {extras = ["math"], version = "^0.9"}
+lighteval = "0.10.0"
 questionary = "^2.0.0"
 pydantic = "^2.0.0"
+litellm = {extras = ["caching"], version = "^1.75.5.post1"}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0.0"
