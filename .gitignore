@@ -154,6 +154,9 @@ logs/
 DATASET_INTEGRATION_NOTES.md
 create_datasets.py
 
+# Local validation artifacts
+*_validation.json
+
 # Docker
 docker-compose.override.yml
 
