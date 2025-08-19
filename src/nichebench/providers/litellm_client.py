@@ -1,6 +1,6 @@
 """Minimal litellm client wrapper stub. Replace with real litellm client in future."""
+
 import time
-from typing import Any
 
 
 class LiteLLMClient:

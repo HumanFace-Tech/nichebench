@@ -1,25 +1,32 @@
 """MVP: Run evals for a framework/category/model, print progress, save results (stub logic)."""
-import typer
-from pathlib import Path
-from datetime import datetime
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
-from rich.console import Console
 
-import random
-import os
 import importlib.util
+import random
+from datetime import datetime
+from pathlib import Path
+
+import typer
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 
 from nichebench.core.discovery import discover_frameworks
-from nichebench.utils.io import ensure_results_dir, save_jsonl, save_json
+from nichebench.utils.io import ensure_results_dir, save_json, save_jsonl
 
 app = typer.Typer()
 console = Console()
+
 
 @app.command()
 def all(
     framework: str = typer.Argument(..., help="Framework name"),
     category: str = typer.Argument(..., help="Task category (e.g. quiz, code_generation)"),
-    model: str = typer.Option("dummy-model", help="Model name (for results folder)")
+    model: str = typer.Option("dummy-model", help="Model name (for results folder)"),
 ):
     """Run all test cases for a framework/category with stub logic."""
     root = Path(__file__).resolve().parents[4] / "src" / "nichebench" / "frameworks"
@@ -43,8 +50,18 @@ def all(
     details_path = outdir / "details.jsonl"
     summary_path = outdir / "summary.json"
     # Import system prompt for MUT
-    prompt_mod_path = Path(__file__).resolve().parents[6] / "frameworks" / framework / "prompts" / f"{category.upper()}.py"
-    judge_mod_path = Path(__file__).resolve().parents[6] / "frameworks" / framework / "prompts" / "judges" / f"JUDGE_{category.upper()}.py"
+    prompt_mod_path = (
+        Path(__file__).resolve().parents[6] / "frameworks" / framework / "prompts" / f"{category.upper()}.py"
+    )
+    judge_mod_path = (
+        Path(__file__).resolve().parents[6]
+        / "frameworks"
+        / framework
+        / "prompts"
+        / "judges"
+        / f"JUDGE_{category.upper()}.py"
+    )
+
     def import_prompt_var(mod_path, var_name):
         if not mod_path.exists():
             return None
@@ -76,7 +93,11 @@ def all(
             # Simulate model output
             mut_output = f"[MUT output for {tc.id}]"
             # Simulate judge output (random pass/fail)
-            judge_output = {"score": random.choice([0, 1]), "explanation": "stub", "judge_system_prompt": bool(judge_system_prompt)}
+            judge_output = {
+                "score": random.choice([0, 1]),
+                "explanation": "stub",
+                "judge_system_prompt": bool(judge_system_prompt),
+            }
             result = {
                 "framework": framework,
                 "category": category,
@@ -104,5 +125,6 @@ def all(
     save_json(summary_path, summary)
     # Show report immediately after run
     from ..rich_views.reports import render_run_completion_report
+
     render_run_completion_report(summary_path, details_path)
     console.print(f"[green]Results saved to {outdir}[/green]")

@@ -26,7 +26,20 @@ pytest = "^8.4.1"
 pytest-xdist = "^3.8.0"
 black = "^25.1.0"
 ruff = "^0.12.9"
+pre-commit = "^4.3.0"
+
+[tool.ruff.per-file-ignores]
+# Allow long literal prompt strings in framework prompt modules
+"src/nichebench/frameworks/*/prompts/*.py" = ["E501"]
+"src/nichebench/frameworks/*/prompts/judges/*.py" = ["E501"]
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+[tool.ruff]
+line-length = 120
+extend-select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

@@ -1,12 +1,15 @@
-
 """
 Rich report rendering for NicheBench runs.
 """
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from pathlib import Path
+
 import json
+from collections import defaultdict
+from pathlib import Path
+from typing import Mapping
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 
 def render_run_completion_report(summary_path: Path, details_path: Path = None):
@@ -28,10 +31,18 @@ def render_run_completion_report(summary_path: Path, details_path: Path = None):
     }
     # Add vertical space before summary
     console.print("\n")
-    table = Table(title="[bold green]Run Summary[/bold green]", header_style="bold magenta", width=120, padding=(0, 1))
+    table = Table(
+        title="[bold green]Run Summary[/bold green]",
+        header_style="bold magenta",
+        width=120,
+        padding=(0, 1),
+    )
     for k in summary.keys():
         col_title = f"{emoji_map.get(k, '')} {k.capitalize()}" if k in emoji_map else k.capitalize()
-        table.add_column(col_title, style="cyan" if k in ("framework", "category", "model") else "white")
+        table.add_column(
+            col_title,
+            style="cyan" if k in ("framework", "category", "model") else "white",
+        )
     row = []
     for k in summary.keys():
         val = summary[k]
@@ -53,17 +64,22 @@ def render_run_completion_report(summary_path: Path, details_path: Path = None):
 
         # Parse all lines and group by (framework, category, mut_model, judge_model)
         parsed = [json.loads(line) for line in lines]
+
         def group_key(row):
             return (
                 row.get("framework", "?"),
                 row.get("category", "?"),
                 row.get("mut_model", "?"),
-                row.get("judge_model", "?")
+                row.get("judge_model", "?"),
             )
-        from collections import defaultdict
+
         groups = defaultdict(list)
         for row in parsed:
+            # row should be a mapping/dict; guard if not
+            if not isinstance(row, Mapping):
+                continue
             groups[group_key(row)].append(row)
+
         for (fw, cat, mut, judge), rows in groups.items():
             # Consistent header formatting and width
             header_text = (
@@ -91,13 +107,27 @@ def render_run_completion_report(summary_path: Path, details_path: Path = None):
                 pass_emoji = "[green]✅[/green]" if passed in (True, "True", 1, "1") else "[red]❌[/red]"
                 dtable.add_row(str(test_id), str(gold), str(judge_output), pass_emoji, inp, outp)
             # Put the table inside the panel, let panel grow organically
-            console.print('\n')
-            console.print(Panel(dtable, title=header_text, style="cyan", padding=(1, 0, 0, 0), expand=True, width=140))
+            console.print("\n")
+            console.print(
+                Panel(
+                    dtable,
+                    title=header_text,
+                    style="cyan",
+                    padding=(1, 0, 0, 0),
+                    expand=True,
+                    width=140,
+                )
+            )
+
 
 def render_run_list(run_dirs):
     """Render a table of available runs (for report list)."""
     console = Console()
-    table = Table(title="[bold cyan]Available Runs[/bold cyan]", header_style="bold magenta", padding=(0, 1))
+    table = Table(
+        title="[bold cyan]Available Runs[/bold cyan]",
+        header_style="bold magenta",
+        padding=(0, 1),
+    )
     table.add_column("🧩 Framework", style="cyan")
     table.add_column("📂 Task", style="cyan")
     table.add_column("🤖 Model", style="magenta")

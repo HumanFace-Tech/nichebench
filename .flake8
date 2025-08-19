@@ -1,11 +1,11 @@
 [flake8]
-max-line-length = 88
+max-line-length = 120
+
+# Ignore long literal prompt strings in framework prompt modules
+per-file-ignores =
+    src/nichebench/frameworks/*/prompts/*.py:E501
+    src/nichebench/frameworks/*/prompts/judges/*.py:E501
+
 extend-ignore = E203, W503, F401
-exclude =
-    .git,
-    __pycache__,
-    .venv,
-    venv,
-    build,
-    dist,
-    .eggs
+
+exclude = .git,__pycache__,.venv,venv,build,dist,.eggs

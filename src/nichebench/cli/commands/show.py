@@ -1,6 +1,8 @@
 """Show a single test case by id."""
-import typer
+
 from pathlib import Path
+
+import typer
 from rich.console import Console
 from rich.panel import Panel
 
@@ -30,5 +32,19 @@ def case(test_id: str = typer.Argument(..., help="Test case id")):
         console.print(f"[red]Test case '{test_id}' not found.[/red]")
         raise typer.Exit(code=2)
     framework_name, ts, tc = found
-    body = f"Framework: {framework_name}\nType: {ts.task_type}\nID: {tc.id}\nSummary: {tc.summary or ''}\n\nContext:\n{(tc.context or '')[:1000]}\n\nRaw:\n{tc.raw}"
+
+    # Build the panel body as a list of shorter lines to avoid long-line lint errors
+    body_lines = [
+        f"Framework: {framework_name}",
+        f"Type: {ts.task_type}",
+        f"ID: {tc.id}",
+        f"Summary: {tc.summary or ''}",
+        "",
+        "Context:",
+        (tc.context or "")[:1000],
+        "",
+        "Raw:",
+        str(tc.raw),
+    ]
+    body = "\n".join(body_lines)
     console.print(Panel(body, title=f"{tc.id}"))

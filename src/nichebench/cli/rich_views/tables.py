@@ -1,4 +1,5 @@
 """Reusable rich table components for nichebench CLI."""
+
 from rich.table import Table
 
 

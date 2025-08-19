@@ -1,10 +1,13 @@
 """YAML loader for test cases under framework packs."""
+
 from __future__ import annotations
-import yaml
+
 from pathlib import Path
 from typing import List
 
-from nichebench.core.datamodel import TestCaseSpec, TaskSpec
+import yaml
+
+from nichebench.core.datamodel import TaskSpec, TestCaseSpec
 
 
 def load_testcase_from_file(path: Path) -> TestCaseSpec:
@@ -33,7 +36,11 @@ def load_taskspecs_for_framework(framework_path: Path, framework_name: str) -> L
     for task_type_dir in data_dir.iterdir():
         if not task_type_dir.is_dir():
             continue
-        ts = TaskSpec(framework=framework_name, task_type=task_type_dir.name, file_path=str(task_type_dir))
+        ts = TaskSpec(
+            framework=framework_name,
+            task_type=task_type_dir.name,
+            file_path=str(task_type_dir),
+        )
         for yaml_file in sorted(task_type_dir.glob("*.yaml")):
             try:
                 tc = load_testcase_from_file(yaml_file)

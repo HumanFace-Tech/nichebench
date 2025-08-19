@@ -2,7 +2,6 @@
 
 This is a stub used for local development and tests.
 """
-from typing import Any
 
 
 class JudgeAdapter:
