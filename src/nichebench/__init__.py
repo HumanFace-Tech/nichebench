@@ -1,12 +1,8 @@
-"""
-NicheBench - LightEval-powered CLI framework for benchmarking AI models
-on framework-specific tasks.
-"""
-
-__version__ = "0.1.0"
-__author__ = "Nikro"
-__email__ = ""
-__description__ = (
-    "LightEval-powered CLI framework for benchmarking AI models "
-    "on framework-specific tasks"
-)
+"""nichebench package - minimal scaffolding for discovery, loading, and CLI."""
+__all__ = [
+    "cli",
+    "core",
+    "config",
+    "providers",
+    "utils",
+]

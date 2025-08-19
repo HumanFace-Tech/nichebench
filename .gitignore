@@ -153,6 +153,7 @@ logs/
 # Generated or helper scripts we don't want in commits
 DATASET_INTEGRATION_NOTES.md
 create_datasets.py
+PROGRESS.md
 
 # Local validation artifacts
 *_validation.json

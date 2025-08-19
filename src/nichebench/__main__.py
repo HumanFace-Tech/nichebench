@@ -1,9 +1,5 @@
-#!/usr/bin/env python3
-"""
-Entry point for running nichebench as a module with python -m nichebench
-"""
-
-from nichebench.main import app
+"""Entry point for python -m nichebench"""
+from .cli.app import main
 
 if __name__ == "__main__":
-    app()
+    main()
