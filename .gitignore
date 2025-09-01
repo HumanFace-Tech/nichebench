@@ -154,6 +154,7 @@ logs/
 DATASET_INTEGRATION_NOTES.md
 create_datasets.py
 PROGRESS.md
+NOTES.md
 
 # Local validation artifacts
 *_validation.json
@@ -166,3 +167,6 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# DeepEval telemetry
+.deepeval/

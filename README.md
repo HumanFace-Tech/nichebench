@@ -1,78 +1,172 @@
 # NicheBench
 
-NicheBench is a flexible, extensible CLI framework for benchmarking AI models on **framework-specific tasks**. Starting with Drupal, it features LLM-as-a-Judge evaluation, dynamic checklists, and a rich CLI for interactive reporting.
+NicheBench is a lightweight, extensible CLI framework for benchmarking AI models on **framework-specific tasks**. Starting with Drupal, it features LLM-as-a-Judge evaluation, configuration-driven model management, and a rich CLI for interactive reporting.
 
-## Features
+## ✨ Key Features
 
-- **Framework Packs:** Plug-and-play support for frameworks (Drupal, WordPress, etc.)
-- **Task Types:** Quiz (MCQ), code generation, and bug fixing
-- **LLM-as-a-Judge:** All tasks are scored by a second LLM using custom prompts
-- **Dynamic Checklists:** Each test case can define its own evaluation criteria
-- **Auto-Discovery:** New frameworks and tasks are auto-discovered from `frameworks/`
-- **Rich CLI:** Beautiful output with tables, panels, and progress bars
-- **Parallel Execution:** Multi-process runs with live progress
-- **Provider Agnostic:** Uses `litellm` for OpenAI, Groq, Anthropic, etc.
+- **🎯 LLM-as-a-Judge**: All tasks scored by a second LLM with custom prompts (no regex/heuristics)
+- **📦 Framework Packs**: Plug-and-play support for frameworks (Drupal first, others to follow)
+- **⚙️ Configuration-Driven**: YAML-based configuration with profiles for different evaluation scenarios
+- **🔧 Provider Agnostic**: Works with OpenAI, Groq, Anthropic, etc. via `litellm`
+- **🎨 Rich CLI**: Beautiful progress bars, tables, and interactive reporting
+- **🔍 Auto-Discovery**: New frameworks and tasks discovered automatically
+- **📊 Structured Results**: Detailed JSON/JSONL output for analysis and reproducibility
 
-## Quick Start
+## 🚀 Quick Start
 
 ```bash
-# Install dependencies and activate environment
+# Install and run
 poetry install
-poetry shell
-
-# List available frameworks and tasks
-nichebench list
-
-# View specific tasks for a framework
-nichebench list-tasks drupal
-
-# Inspect a test case
-nichebench show drupal_quiz_001
-
-# Run evaluations (stub mode for now)
-nichebench run drupal quiz --model gpt-4
-
-# View results
-nichebench report
-
-# Alternative: Run without activating shell
 poetry run nichebench list
+
+# View available tasks
+poetry run nichebench list drupal
+
+# Run evaluations (uses configuration defaults)
+poetry run nichebench run drupal quiz
+
+# Run with specific models
+poetry run nichebench run drupal quiz --model groq/llama-3.1-8b-instant --judge openai/gpt-4o
+
+# Use configuration profiles
+poetry run nichebench run drupal quiz --profile fast        # Groq models for speed
+poetry run nichebench run drupal quiz --profile reasoning   # OpenAI o1 for complex tasks
+poetry run nichebench run drupal quiz --profile anthropic   # Claude models
+
+# Run tests
+poetry run pytest
 ```
 
-## Current Status
+## ⚙️ Configuration
 
-- **Drupal Framework Pack:** 9 tasks (5 quiz, 3 code generation, 1 bug fixing)
-- **Rich CLI:** Interactive listing, task inspection, and result reporting
-- **Stub Runner:** Basic evaluation flow with dummy results
-- **Results Storage:** Structured JSON/JSONL in `results/` directory
+NicheBench uses a `nichebench.yml` configuration file with intelligent defaults and profile system:
 
-## Project Structure
+```yaml
+# Model Under Test (MUT) configuration
+mut:
+  provider: "groq"
+  model: "gemma2-9b-it"
+  parameters:
+    temperature: 0.0
+    max_tokens: 4096
+
+# Judge model configuration
+judge:
+  provider: "openai"
+  model: "gpt-4o"
+  parameters:
+    temperature: 1.0
+    max_tokens: 1024
+
+# Configuration profiles for different scenarios
+profiles:
+  fast:       # Cost-effective Groq models
+    mut: {provider: "groq", model: "llama-3.1-8b-instant"}
+    judge: {provider: "groq", model: "llama-3.1-70b-versatile"}
+
+  reasoning:  # OpenAI o1 models with reasoning
+    mut:
+      provider: "openai"
+      model: "o1-preview"
+      parameters:
+        reasoning_effort: "high"
+        reasoning_format: "hidden"
+    judge: {provider: "openai", model: "o1-mini"}
+```
+
+**Configuration Precedence**: CLI args > Environment variables > Profile > Defaults
+
+## 🧪 Current Status
+
+- **✅ Drupal Framework Pack**: 9 tasks (5 quiz, 3 code generation, 1 bug fixing)
+- **✅ Configuration System**: Profile-based model management with YAML configuration
+- **✅ LLM Integration**: Full litellm support with parameter filtering and error handling
+- **✅ Judge-driven Evaluation**: DeepEval-compatible metrics with structured JSON responses
+- **✅ Rich CLI**: Interactive reporting with progress bars and detailed result tables
+- **✅ Test Coverage**: Comprehensive test suite with mocked LLM responses
+
+## 📁 Project Structure
 
 ```text
 nichebench/
-├── results/                # Run outputs
-└── src/
-    └── nichebench/
-        ├── cli/            # CLI + Rich UI
-        ├── core/           # Discovery, datamodel, loaders
-        ├── providers/      # LLM client + judge adapters
-        ├── frameworks/     # Framework packs (Drupal, ...)
-        ├── config/         # Settings
-        └── utils/          # Helpers
+├── nichebench.yml              # Configuration file
+├── results/                    # Evaluation outputs
+└── src/nichebench/
+    ├── cli/                    # CLI commands + Rich UI
+    ├── config/                 # Configuration management
+    ├── core/                   # Discovery, datamodel, loaders
+    ├── providers/              # LLM client + judge adapters
+    ├── metrics/                # DeepEval-compatible metrics
+    ├── frameworks/             # Framework packs
+    │   └── drupal/
+    │       ├── data/           # YAML test cases
+    │       └── prompts/        # System prompts (MUT + Judge)
+    └── utils/                  # Helpers
 ```
 
-## Development
+## 🔧 Development
 
-- Python 3.10+, Poetry, Typer, Rich, deepeval, litellm
-- Test with `pytest -n auto`
-- Follow PEP8 and project linting rules
+```bash
+# Setup development environment
+poetry install
+poetry run pre-commit install
 
-## How NicheBench Differs
+# Run tests
+poetry run pytest
 
-- Judge-based evaluation (no regex)
-- Modular, framework-specific, checklist-driven
-- Not a generic eval harness
+# Code quality checks
+poetry run pre-commit run --all-files
 
-## License
+# CLI development
+poetry run nichebench --help
+```
 
-MIT
+**Requirements**: Python 3.10+, Poetry for dependency management
+
+## 📝 How to Author Tasks
+
+### Test Cases (YAML)
+
+```yaml
+# frameworks/drupal/data/quiz/my_quiz.yaml
+id: "drupal_quiz_006"
+question: "Which API should you use for custom entities in Drupal 11?"
+choices:
+  - "hook_entity_info()"
+  - "EntityTypeInterface annotation"
+  - "EntityInterface::create()"
+  - "Custom entity plugins"
+correct_choice: "B"
+context: "You're building a custom module..."
+```
+
+### System Prompts (Python)
+
+```python
+# frameworks/drupal/prompts/QUIZ.py
+QUIZ_SYSTEM_PROMPT = """You are a senior Drupal developer...
+Respond with only the letter of your choice (A, B, C, D, or E)."""
+
+# frameworks/drupal/prompts/judges/JUDGE_QUIZ.py
+JUDGE_QUIZ_SYSTEM_PROMPT = """You are an expert evaluator...
+Respond with JSON: {"pass": true/false, "selected": "B", "score": 1, "explanation": "..."}"""
+```
+
+## 🎯 How NicheBench Differs
+
+- **Framework-Specific**: Focus on niche technical domains (Drupal, WordPress, etc.) vs. generic benchmarks
+- **Judge-Centric**: Every evaluation uses LLM-as-a-Judge with custom prompts, not regex matching
+- **Configuration-Driven**: Profile system eliminates CLI parameter overload
+- **Modular**: Plug-and-play framework packs with auto-discovery
+- **Rich UX**: Beautiful CLI with progress tracking and interactive reports
+
+## 🤝 Contributing
+
+1. Add new framework packs under `src/nichebench/frameworks/<name>/`
+2. Create YAML test cases in `data/<category>/` directories
+3. Define system prompts in `prompts/` for both MUT and judge
+4. Follow the existing Drupal pack structure
+
+## 📄 License
+
+MIT License - see [LICENSE](LICENSE) file for details.

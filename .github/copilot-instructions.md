@@ -57,6 +57,7 @@ nichebench/
 1. **Environment & Tooling:**
 
    * Always use **Poetry** (`poetry add`, `poetry run`). Never raw pip.
+   * Also use poetry to run things (not python -m ...)
    * Python 3.10+.
    * Dependencies: `typer`, `rich`, `deepeval`, `litellm`, `pyyaml`, `pandas`, `pytest`.
 

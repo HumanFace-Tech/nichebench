@@ -1,0 +1,95 @@
+# NicheBench Configuration
+# This file controls model settings, evaluation parameters, and global behavior
+
+# Model Under Test (MUT) configuration
+mut:
+  provider: "groq"
+  model: "gemma2-9b-it"
+  parameters:
+    temperature: 0.0
+    max_tokens: 4096
+    top_p: 1.0
+    # Note: reasoning parameters only work with o1 models
+    # reasoning_effort: "medium"  # "low", "medium", "high", or null to disable
+    # reasoning_format: "hidden"  # "hidden" or "visible" - hidden is ideal for MUT
+
+# Judge model configuration
+judge:
+  provider: "openai"
+  model: "gpt-5"
+  parameters:
+    temperature: 1.0
+    max_tokens: 1024
+    top_p: 1.0
+    # Judge typically doesn't need reasoning params, but available if needed
+    # reasoning_effort: "low"
+    # reasoning_format: "visible"
+
+# Global evaluation settings
+evaluation:
+  save_full_prompts: true       # Include full input prompts in results
+  save_raw_outputs: true        # Include raw model outputs
+  parallel_workers: 4           # Number of parallel evaluation workers
+
+# Results and reporting
+results:
+  auto_report: true             # Show rich report after each run
+  save_format: "jsonl"          # Format: jsonl, json, csv
+  timestamp_format: "%Y%m%d_%H%M%S"
+
+# Framework-specific recommendations (commented examples)
+# frameworks:
+#   drupal:
+#     recommended_mut_models:
+#       - {provider: "groq", model: "llama3-70b-8192", temp: 0.0}
+#       - {provider: "openai", model: "o1-mini", reasoning_effort: "high"}
+#       - {provider: "anthropic", model: "claude-3-5-sonnet-20241022", temp: 0.0}
+#
+#   wordpress:
+#     recommended_mut_models:
+#       - {provider: "openai", model: "gpt-4o", temp: 0.1}
+
+# Configuration profiles for different evaluation scenarios
+profiles:
+  # High-end reasoning models for complex tasks
+  reasoning:
+    mut:
+      provider: "openai"
+      model: "o1-preview"
+      parameters:
+        reasoning_effort: "high"
+        reasoning_format: "hidden"
+        max_completion_tokens: 8192
+    judge:
+      provider: "openai"
+      model: "o1-mini"
+      parameters:
+        reasoning_effort: "medium"
+
+  # Fast evaluation with cost-effective models
+  fast:
+    mut:
+      provider: "groq"
+      model: "llama-3.1-8b-instant"
+      parameters:
+        temperature: 0.1
+        max_tokens: 2048
+    judge:
+      provider: "groq"
+      model: "meta-llama/llama-4-maverick-17b-128e-instruct"
+
+  # Claude-based evaluation
+  anthropic:
+    mut:
+      provider: "anthropic"
+      model: "claude-3-5-sonnet-20241022"
+      parameters:
+        temperature: 0.0
+        max_tokens: 4096
+    judge:
+      provider: "anthropic"
+      model: "claude-3-haiku-20240307"
+#
+#   budget:
+#     mut: {provider: "together", model: "meta-llama/Llama-3-8b-chat-hf", temp: 0.0}
+#     judge: {provider: "groq", model: "llama3-70b-8192", temp: 0.5}

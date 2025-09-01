@@ -1,6 +1,7 @@
 """List frameworks and tasks available."""
 
 from pathlib import Path
+from typing import Optional
 
 import typer
 from rich.console import Console
@@ -54,10 +55,29 @@ def frameworks():
 
 
 @app.command()
-def tasks(framework: str = typer.Argument(..., help="framework name")):
-    """List tasks for a given framework."""
+def tasks(framework: Optional[str] = typer.Argument(None, help="framework name (optional)")):
+    """List tasks for a given framework.
+
+    If `framework` is omitted, show the list of discovered frameworks instead of erroring.
+    """
     root = Path(__file__).resolve().parents[4] / "src" / "nichebench" / "frameworks"
     frameworks = discover_frameworks(root)
+    # If no framework specified, print available frameworks and counts.
+    if framework is None:
+        from rich import box
+
+        table = Table(
+            title="[bold cyan]Discovered Frameworks[/bold cyan]",
+            box=box.SIMPLE,
+            border_style="cyan",
+        )
+        table.add_column("[bold yellow]Framework[/bold yellow]", style="bold yellow")
+        table.add_column("[bold blue]Total Tasks[/bold blue]", style="bold blue", justify="right")
+        for name, tasklist in frameworks.items():
+            total = sum(len(t.testcases) for t in tasklist)
+            table.add_row(f"[yellow]{name}[/yellow]", f"[bold blue]{total}[/bold blue]")
+        console.print(table)
+        return
     if framework not in frameworks:
         console.print(f"[red]Framework '{framework}' not found.[/red]")
         raise typer.Exit(code=1)
