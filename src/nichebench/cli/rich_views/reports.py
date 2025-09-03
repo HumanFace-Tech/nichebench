@@ -5,14 +5,15 @@ Rich report rendering for NicheBench runs.
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Mapping
+from typing import List, Mapping, Optional, Tuple
 
 from rich.console import Console
 from rich.panel import Panel
+from rich.prompt import Prompt
 from rich.table import Table
 
 
-def render_run_completion_report(summary_path: Path, details_path: Path = None):
+def render_run_completion_report(summary_path: Path, details_path: Optional[Path] = None):
     """Render a summary report after a run (called by RUN command)."""
     console = Console()
     if not summary_path.exists():
@@ -136,3 +137,46 @@ def render_run_list(run_dirs):
     for fw, task, model, ts, path in run_dirs:
         table.add_row(fw, task, model, ts, str(path))
     console.print(table)
+
+
+def render_run_selector(
+    runs: List[Tuple[str, str, str, str, Path]], limit: int = 10
+) -> Optional[Tuple[str, str, str, str, Path]]:
+    """Render an interactive run selector and return the chosen run tuple.
+
+    Returns the chosen tuple (framework, task, model, timestamp, path) or None
+    if the user quits or there are no runs.
+    """
+    console = Console()
+    if not runs:
+        console.print("[red]No runs found.")
+        return None
+
+    # Show most recent runs first, limit to `limit`
+    runs_sorted = sorted(runs, key=lambda x: x[3], reverse=True)[:limit]
+
+    table = Table(
+        title="[bold cyan]Select a Run to View[/bold cyan]",
+        header_style="bold magenta",
+        width=120,
+        padding=(0, 1),
+    )
+    table.add_column("#", style="bold yellow", width=5, justify="center")
+    table.add_column("🧩 Framework", style="cyan", width=15)
+    table.add_column("📂 Task", style="cyan", width=15)
+    table.add_column("🤖 Model", style="magenta", width=20)
+    table.add_column("⏰ Timestamp", style="yellow", width=20)
+
+    for idx, (fw, task, model, ts, path) in enumerate(runs_sorted, 1):
+        table.add_row(str(idx), fw, task, model, ts)
+
+    console.print(table)
+    choice = Prompt.ask(
+        "Select a run to view (1-{}), or [b]q[/b] to quit".format(len(runs_sorted)),
+        choices=[str(i) for i in range(1, len(runs_sorted) + 1)] + ["q"],
+        default="1",
+    )
+    if choice == "q":
+        return None
+    idx = int(choice) - 1
+    return runs_sorted[idx]

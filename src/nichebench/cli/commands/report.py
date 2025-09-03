@@ -8,45 +8,21 @@ CLI command: report
 from pathlib import Path
 
 import typer
-from rich.console import Console
-from rich.prompt import Prompt
-from rich.table import Table
 
-from ..rich_views.reports import render_run_completion_report, render_run_list
+from ..rich_views.reports import (
+    render_run_completion_report,
+    render_run_list,
+    render_run_selector,
+)
 from .report_utils import find_all_run_dirs
 
 
 def _interactive_report_selector():
     runs = list(find_all_run_dirs())
-    if not runs:
-        Console().print("[red]No runs found.")
+    selected = render_run_selector(runs)
+    if not selected:
         raise typer.Exit(1)
-    # Show last 10 runs (most recent last)
-    runs = sorted(runs, key=lambda x: x[3], reverse=True)[:10]
-    table = Table(
-        title="[bold cyan]Select a Run to View[/bold cyan]",
-        header_style="bold magenta",
-        width=120,
-        padding=(0, 1),
-    )
-    table.add_column("#", style="bold yellow", width=5, justify="center")
-    table.add_column("🧩 Framework", style="cyan", width=15)
-    table.add_column("📂 Task", style="cyan", width=15)
-    table.add_column("🤖 Model", style="magenta", width=20)
-    table.add_column("⏰ Timestamp", style="yellow", width=20)
-    for idx, (fw, task, model, ts, path) in enumerate(runs, 1):
-        table.add_row(str(idx), fw, task, model, ts)
-    console = Console()
-    console.print(table)
-    choice = Prompt.ask(
-        "Select a run to view (1-{}), or [b]q[/b] to quit".format(len(runs)),
-        choices=[str(i) for i in range(1, len(runs) + 1)] + ["q"],
-        default="1",
-    )
-    if choice == "q":
-        raise typer.Exit(0)
-    idx = int(choice) - 1
-    fw, task, model, ts, path = runs[idx]
+    fw, task, model, ts, path = selected
     summary_path = path / "summary.json"
     details_path = path / "details.jsonl"
     render_run_completion_report(summary_path, details_path)

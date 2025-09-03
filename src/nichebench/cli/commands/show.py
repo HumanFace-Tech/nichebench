@@ -4,9 +4,10 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
-from rich.panel import Panel
 
 from nichebench.core.discovery import discover_frameworks
+
+from ..rich_views.tables import render_case_panel
 
 app = typer.Typer()
 console = Console()
@@ -33,18 +34,4 @@ def case(test_id: str = typer.Argument(..., help="Test case id")):
         raise typer.Exit(code=2)
     framework_name, ts, tc = found
 
-    # Build the panel body as a list of shorter lines to avoid long-line lint errors
-    body_lines = [
-        f"Framework: {framework_name}",
-        f"Type: {ts.task_type}",
-        f"ID: {tc.id}",
-        f"Summary: {tc.summary or ''}",
-        "",
-        "Context:",
-        (tc.context or "")[:1000],
-        "",
-        "Raw:",
-        str(tc.raw),
-    ]
-    body = "\n".join(body_lines)
-    console.print(Panel(body, title=f"{tc.id}"))
+    render_case_panel(framework_name, ts, tc)

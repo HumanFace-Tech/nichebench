@@ -10,13 +10,6 @@ import typer
 from deepeval.test_case import LLMTestCase
 from dotenv import load_dotenv
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
 
 from nichebench.config.nichebench_config import get_config
 from nichebench.core.discovery import discover_frameworks
@@ -25,6 +18,12 @@ from nichebench.providers.litellm_client import LiteLLMClient
 from nichebench.providers.litellm_judge import LiteLLMJudge
 from nichebench.providers.mut_prompt_composer import MUTPromptComposer
 from nichebench.utils.io import ensure_results_dir, save_json, save_jsonl
+
+from ..rich_views.run_views import (
+    make_run_progress,
+    render_results_saved,
+    render_run_header,
+)
 
 app = typer.Typer()
 console = Console()
@@ -55,10 +54,7 @@ def all(
     mut_model_str = config.get_model_string(mut_config)
     judge_model_str = config.get_model_string(judge_config)
 
-    console.print(f"[cyan]Using MUT:[/cyan] {mut_model_str}")
-    console.print(f"[cyan]Using Judge:[/cyan] {judge_model_str}")
-    if profile:
-        console.print(f"[cyan]Profile:[/cyan] {profile}")
+    render_run_header(console, mut_model_str, judge_model_str, profile)
 
     root = Path(__file__).resolve().parents[4] / "src" / "nichebench" / "frameworks"
     frameworks = discover_frameworks(root)
@@ -105,14 +101,7 @@ def all(
     judge_system_prompt = import_prompt_var(judge_mod_path, f"JUDGE_{category.upper()}_SYSTEM_PROMPT")
 
     results = []
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
+    with make_run_progress(console) as progress:
         task_id = progress.add_task(f"[cyan]Running {framework}/{category}", total=len(testcases))
         for tc in testcases:
             # Compose proper prompt using the MUT prompt composer
@@ -202,4 +191,4 @@ def all(
     from ..rich_views.reports import render_run_completion_report
 
     render_run_completion_report(summary_path, details_path)
-    console.print(f"[green]Results saved to {outdir}[/green]")
+    render_results_saved(outdir, console)
