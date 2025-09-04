@@ -39,4 +39,3 @@ judge_checklist:
   - "Service definitions (services.yml) follow DI best practices; no container calls via Drupal::service() inside methods"
   - "Strict types, return types, and PSR-12 coding standards; meaningful PHPDoc on classes/methods"
   - "Functional test (BrowserTestBase) covers allowed/forbidden scenarios across time boundaries and asserts cache contexts in response headers"
-  - "phpunit.xml(.dist) uses HtmlOutputLogger via <extensions> (no deprecated printer/listener wiring)"

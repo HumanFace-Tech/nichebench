@@ -5,10 +5,13 @@ NicheBench is a lightweight, extensible CLI framework for benchmarking AI models
 ## ✨ Key Features
 
 - **🎯 LLM-as-a-Judge**: All tasks scored by a second LLM with custom prompts (no regex/heuristics)
-- **📦 Framework Packs**: Plug-and-play support for frameworks (Drupal first, others to follow)
+- **� 3-Value Scoring**: Pass (>66%), Partial (33-66%), Fail (<33%) for nuanced evaluation
+- **🤖 Multi-Turn Conversations**: Agentic code generation with iterative refinement
+- **🛡️ Runaway Protection**: Automatic detection and handling of repetitive model responses
+- **�📦 Framework Packs**: Plug-and-play support for frameworks (Drupal first, others to follow)
 - **⚙️ Configuration-Driven**: YAML-based configuration with profiles for different evaluation scenarios
 - **🔧 Provider Agnostic**: Works with OpenAI, Groq, Anthropic, etc. via `litellm`
-- **🎨 Rich CLI**: Beautiful progress bars, tables, and interactive reporting
+- **🎨 Rich CLI**: Beautiful progress bars, tables, and interactive reporting with stacked results
 - **🔍 Auto-Discovery**: New frameworks and tasks discovered automatically
 - **📊 Structured Results**: Detailed JSON/JSONL output for analysis and reproducibility
 
@@ -38,6 +41,13 @@ poetry run pytest
 ```
 
 ## ⚙️ Configuration
+
+Copy the sample configuration and customize for your needs:
+
+```bash
+cp nichebench.sample.yml nichebench.yml
+# Edit nichebench.yml with your API keys and preferred models
+```
 
 NicheBench uses a `nichebench.yml` configuration file with intelligent defaults and profile system:
 
@@ -78,25 +88,28 @@ profiles:
 
 ## 🧪 Current Status
 
-- **✅ Drupal Framework Pack**: 9 tasks (5 quiz, 3 code generation, 1 bug fixing)
+- **✅ Drupal Framework Pack**: 2 quiz + 1 code generation task (more coming)
+- **✅ Multi-Turn Code Generation**: Agentic conversations with up to 5 turns
+- **✅ 3-Value Scoring System**: Pass/Partial/Fail evaluation with percentage thresholds
+- **✅ Runaway Protection**: Automatic detection of repetitive/infinite loop responses
 - **✅ Configuration System**: Profile-based model management with YAML configuration
 - **✅ LLM Integration**: Full litellm support with parameter filtering and error handling
 - **✅ Judge-driven Evaluation**: DeepEval-compatible metrics with structured JSON responses
-- **✅ Rich CLI**: Interactive reporting with progress bars and detailed result tables
+- **✅ Rich CLI**: Interactive reporting with stacked results and average scores
 - **✅ Test Coverage**: Comprehensive test suite with mocked LLM responses
 
 ## 📁 Project Structure
 
 ```text
 nichebench/
-├── nichebench.yml              # Configuration file
+├── nichebench.sample.yml       # Sample configuration file
 ├── results/                    # Evaluation outputs
 └── src/nichebench/
     ├── cli/                    # CLI commands + Rich UI
     ├── config/                 # Configuration management
     ├── core/                   # Discovery, datamodel, loaders
-    ├── providers/              # LLM client + judge adapters
-    ├── metrics/                # DeepEval-compatible metrics
+    ├── providers/              # LLM client + judge adapters + conversation management
+    ├── metrics/                # DeepEval-compatible metrics with 3-value scoring
     ├── frameworks/             # Framework packs
     │   └── drupal/
     │       ├── data/           # YAML test cases
@@ -110,6 +123,9 @@ nichebench/
 # Setup development environment
 poetry install
 poetry run pre-commit install
+
+# Copy sample configuration
+cp nichebench.sample.yml nichebench.yml
 
 # Run tests
 poetry run pytest
@@ -155,10 +171,13 @@ Respond with JSON: {"pass": true/false, "selected": "B", "score": 1, "explanatio
 ## 🎯 How NicheBench Differs
 
 - **Framework-Specific**: Focus on niche technical domains (Drupal, WordPress, etc.) vs. generic benchmarks
+- **3-Value Scoring**: Pass/Partial/Fail evaluation provides nuanced performance insights
+- **Multi-Turn Capable**: Supports iterative code generation with conversation management
+- **Runaway Protection**: Handles model misbehavior (infinite loops, repetitive responses) gracefully
 - **Judge-Centric**: Every evaluation uses LLM-as-a-Judge with custom prompts, not regex matching
 - **Configuration-Driven**: Profile system eliminates CLI parameter overload
 - **Modular**: Plug-and-play framework packs with auto-discovery
-- **Rich UX**: Beautiful CLI with progress tracking and interactive reports
+- **Rich UX**: Beautiful CLI with stacked results, average scores, and progress tracking
 
 ## 🤝 Contributing
 

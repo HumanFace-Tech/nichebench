@@ -40,8 +40,8 @@ def test_generate_fallback_echo():
     start = time.time()
     resp = client.generate("hello world", model="openai/gpt-5")
     end = time.time()
-    # Ensure stub returned prompt as output
-    assert resp["output"] == "hello world"
+    # Ensure stub returned an explicit error marker instead of echoing input
+    assert resp["output"] == "[Error: model did not return a response]"
     # Sleep was used in stub; check that it didn't take too long
     assert (end - start) < 1.0
 
@@ -61,7 +61,7 @@ def test_parameter_merging_precedence():
     )
 
     # Stub just echoes, but parameters should be processed
-    assert resp["output"] == "test"
+    assert resp["output"] == "[Error: model did not return a response]"
 
 
 @patch("nichebench.providers.litellm_client.litellm")
@@ -97,8 +97,8 @@ def test_litellm_error_fallback(mock_litellm):
 
     resp = client.generate("test prompt", model="groq/gemma2-9b-it")
 
-    # Should fall back to stub behavior
-    assert resp["output"] == "test prompt"
+    # Should return an explicit error marker and preserve model id
+    assert resp["output"].startswith("[Error: LiteLLM error:")
     assert resp["model"] == "groq/gemma2-9b-it"
 
 
@@ -110,5 +110,5 @@ def test_temperature_adjustment_for_gpt5():
     # This test verifies the logic exists, even though stub doesn't use it
     resp = client.generate("test", model="openai/gpt-5", model_params={"temperature": 0.0})
 
-    # With stub, just verify it doesn't crash
-    assert resp["output"] == "test"
+    # With stub, verify it returns the explicit error marker
+    assert resp["output"] == "[Error: model did not return a response]"

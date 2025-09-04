@@ -150,6 +150,9 @@ logs/
 .env.example
 .litellm_cache/
 
+# Configuration files (use sample versions)
+nichebench.yml
+
 # Generated or helper scripts we don't want in commits
 DATASET_INTEGRATION_NOTES.md
 create_datasets.py

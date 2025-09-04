@@ -10,8 +10,15 @@ def ensure_results_dir(base: Path) -> Path:
     return base
 
 
-def save_jsonl(path: Path, rows: list[dict[str, Any]]):
-    with path.open("w", encoding="utf-8") as fh:
+def save_jsonl(path: Path, rows: list[dict[str, Any]], mode: str = "w"):
+    """Save rows to JSONL file.
+
+    Args:
+        path: File path to save to
+        rows: List of dictionaries to save
+        mode: File mode - 'w' for write (overwrite), 'a' for append
+    """
+    with path.open(mode, encoding="utf-8") as fh:
         for r in rows:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
 

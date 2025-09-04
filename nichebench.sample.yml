@@ -4,10 +4,10 @@
 # Model Under Test (MUT) configuration
 mut:
   provider: "groq"
-  model: "gemma2-9b-it"
+  model: "openai/gpt-oss-120b"          # GPT-5 Mini (released August 7, 2025)
   parameters:
-    temperature: 0.0
-    max_tokens: 4096
+    temperature: 0
+    max_tokens: 32768
     top_p: 1.0
     # Note: reasoning parameters only work with o1 models
     # reasoning_effort: "medium"  # "low", "medium", "high", or null to disable
@@ -19,7 +19,7 @@ judge:
   model: "gpt-5"
   parameters:
     temperature: 1.0
-    max_tokens: 1024
+    max_tokens: 32768
     top_p: 1.0
     # Judge typically doesn't need reasoning params, but available if needed
     # reasoning_effort: "low"
@@ -29,7 +29,16 @@ judge:
 evaluation:
   save_full_prompts: true       # Include full input prompts in results
   save_raw_outputs: true        # Include raw model outputs
-  parallel_workers: 4           # Number of parallel evaluation workers
+  parallel_workers: 1           # Number of parallel evaluation workers
+
+# Network and reliability settings
+network:
+  timeout: 600                  # Request timeout in seconds (increased for large token generation)
+  retry_attempts: 5             # Number of retry attempts for failed requests (default: 5)
+  retry_delay: 3.0             # Base delay between retries in seconds (default: 3.0)
+                               # Uses exponential backoff: delay * (2^attempt) with ±20% jitter
+                               # Example: 3s → 6s → 12s → 24s → 48s (with random variation)
+                               # Retryable errors: timeout, rate limit, server errors, network errors
 
 # Results and reporting
 results:
@@ -51,23 +60,8 @@ results:
 
 # Configuration profiles for different evaluation scenarios
 profiles:
-  # High-end reasoning models for complex tasks
-  reasoning:
-    mut:
-      provider: "openai"
-      model: "o1-preview"
-      parameters:
-        reasoning_effort: "high"
-        reasoning_format: "hidden"
-        max_completion_tokens: 8192
-    judge:
-      provider: "openai"
-      model: "o1-mini"
-      parameters:
-        reasoning_effort: "medium"
-
   # Fast evaluation with cost-effective models
-  fast:
+  groq:
     mut:
       provider: "groq"
       model: "llama-3.1-8b-instant"

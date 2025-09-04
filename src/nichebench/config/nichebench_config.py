@@ -42,6 +42,7 @@ class NicheBenchConfig:
                 "parameters": {"temperature": 1.0, "max_tokens": 1024, "top_p": 1.0},
             },
             "evaluation": {"save_full_prompts": True, "save_raw_outputs": True, "parallel_workers": 4},
+            "network": {"timeout": 120, "retry_attempts": 5, "retry_delay": 3.0},
             "results": {"auto_report": True, "save_format": "jsonl", "timestamp_format": "%Y%m%d_%H%M%S"},
         }
 
@@ -109,6 +110,10 @@ class NicheBenchConfig:
     def get_evaluation_config(self) -> Dict[str, Any]:
         """Get evaluation settings."""
         return self._config["evaluation"].copy()
+
+    def get_network_config(self) -> Dict[str, Any]:
+        """Get network settings."""
+        return self._config["network"].copy()
 
     def get_results_config(self) -> Dict[str, Any]:
         """Get results settings."""
