@@ -11,6 +11,10 @@ drupal/
 │   ├── code_generation/
 │   └── quiz/
 ├── prompts/        # Public evaluation prompts
+├── samples/        # Template files for creating new tests
+│   ├── code_generation.sample.yml
+│   ├── quiz.sample.yml
+│   └── bug_fixing.sample.yml
 └── registry.py     # Framework registration
 ```
 
@@ -78,6 +82,36 @@ cd ../../../../
 git add src/nichebench/frameworks/drupal/data
 git commit -m "Update Drupal test data"
 ```
+
+## Creating New Test Cases
+
+The `samples/` directory contains template files to help you create new test cases:
+
+- **`code_generation.sample.yml`**: Template for complex Drupal development tasks
+- **`quiz.sample.yml`**: Template for multiple choice knowledge questions
+- **`bug_fixing.sample.yml`**: Template for real-world bug scenarios
+
+### Test Case Guidelines
+
+**Where Test Cases Live:**
+
+- All actual test cases go in the **private data repository** under `data/`
+- Use the samples as templates but **never commit sample files to the data repo**
+- Follow naming conventions: `quiz_001.yaml`, `codegen_001.yaml`, `bug_001.yaml`
+
+**Writing Effective Tests:**
+
+- **Context**: Provide rich background (Drupal version, modules, business requirements)
+- **Prompts**: Should lead AI toward a specific solution path without being too obvious
+- **Judge Checklists**: 5-15 criteria that reflect what you guided the AI toward
+- **Judge Notes**: Background knowledge for the LLM judge when domain expertise is needed
+
+**Quality Standards:**
+
+- Prompts should be neither vague nor overly precise
+- Avoid expecting knowledge that wasn't provided in the context
+- Test real-world scenarios that Drupal developers actually encounter
+- Ensure judge criteria are fair and based on the given information
 
 ## Test Types
 

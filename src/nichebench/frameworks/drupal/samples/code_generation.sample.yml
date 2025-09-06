@@ -1,0 +1,15 @@
+id: drupal_code_{number}
+context: |
+  { as we discussed, describe it all, project/stack/caching or other preferences, business background, repo hints or even full code or tree of files that are relevant or what modules are installed and why.. also acceptance notes and criteria.. }
+
+summary: { short description of the task, used in our UI, never shown to anyone }
+
+prompt: |
+  { a full prompt to the MUT (model under test) - these should be NEITHER vague NOR precise.. they should lead the AI to a single implementation path, but w/o pointing it out obviously.. we might even lead it towards 2-3 paths, but then the lower judge_checklist should reflect that and be aware of that}
+
+judge_checklist:
+  - "{ list of things that the judge AI should look in the MUT's reply/implementation - we are looking for 5-15 such criteria. the expected things should NOT come out of the blue.. we can't expect things that MUT never knew or was lead to believe that it needs to implement }"
+  - "..."
+
+judge_notes: |
+  { full explanation and web-found notes to the judge on how this should be implemented, in case the judge does NOT know }

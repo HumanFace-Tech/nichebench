@@ -1,0 +1,18 @@
+id: drupal_bug_{number}
+context: |
+  { describe the Drupal environment, modules, version, and any relevant setup that leads to this bug }
+
+summary: { short description of the bug being fixed }
+
+bug_description: |
+  { detailed description of the bug: what's broken, what should happen instead, any error messages, reproduction steps, etc. }
+
+prompt: |
+  { the prompt asking the MUT to provide a fix - should include enough context about what needs to be fixed without giving away the solution }
+
+judge_checklist:
+  - "{ criteria for evaluating the proposed fix - usually 3-8 items checking for correct approach, security considerations, Drupal best practices, etc. }"
+  - "..."
+
+judge_notes: |
+  { background information for the judge about the proper way to fix this issue, common pitfalls, and what makes a good vs bad solution }
