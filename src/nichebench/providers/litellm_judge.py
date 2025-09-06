@@ -26,6 +26,7 @@ class LiteLLMJudge:
         model: str = "openai/gpt-5",
         model_params: dict | None = None,
         system_prompt: Optional[str] = None,
+        judge_notes: Optional[str] = None,
     ) -> dict[str, Any]:
         """Score a multiple-choice quiz item using an LLM judge.
 
@@ -43,6 +44,14 @@ class LiteLLMJudge:
             prompt_parts.append(f"Choices:\n{choices_text}")
         prompt_parts.append(f"Gold: {gold}")
         prompt_parts.append(f"Model answer: {candidate}")
+
+        # Add judge notes if provided
+        if judge_notes:
+            prompt_parts.append(f"Additional Context for Evaluation:\n{judge_notes.strip()}")
+            prompt_parts.append(
+                "Note: Use the above context to better understand the question and make more accurate assessments."
+            )
+
         prompt_parts.append(
             "Return a JSON object with keys: pass (true/false), selected (letter), score (0 or 1), explanation (short)."
         )
@@ -76,6 +85,7 @@ class LiteLLMJudge:
         model: str = "openai/gpt-4o",
         model_params: dict | None = None,
         system_prompt: Optional[str] = None,
+        judge_notes: Optional[str] = None,
     ) -> dict[str, Any]:
         """Score a code generation task using an LLM judge with checklist criteria.
 
@@ -107,8 +117,16 @@ class LiteLLMJudge:
         prompt_parts.append(f"Task/Prompt: {prompt}")
         prompt_parts.append(f"Generated Code:\n{generated_code}")
         prompt_parts.append(f"Checklist Criteria:\n{checklist_text}")
+
+        # Add judge notes if provided
+        if judge_notes:
+            prompt_parts.append(f"Additional Context for Evaluation:\n{judge_notes.strip()}")
+            prompt_parts.append(
+                "Note: Use the above context to better understand the requirements and make more accurate assessments."
+            )
+
         prompt_parts.append(
-            "Return a JSON object with: criteria (array of {criterion, pass, explanation}), "
+            "Return a JSON object with: criteria (stick to the checklist!) (array of {criterion, pass, explanation}), "
             "overall_score (0.0-1.0), summary (brief assessment)."
         )
 
@@ -160,6 +178,7 @@ class LiteLLMJudge:
         model: str = "openai/gpt-4o",
         model_params: dict | None = None,
         system_prompt: Optional[str] = None,
+        judge_notes: Optional[str] = None,
     ) -> dict[str, Any]:
         """Score a bug fixing task using an LLM judge with checklist criteria.
 
@@ -180,6 +199,14 @@ class LiteLLMJudge:
         prompt_parts.append(f"Bug Description: {bug_description}")
         prompt_parts.append(f"Proposed Fix:\n{proposed_fix}")
         prompt_parts.append(f"Checklist Criteria:\n{checklist_text}")
+
+        # Add judge notes if provided
+        if judge_notes:
+            prompt_parts.append(f"Additional Context for Evaluation:\n{judge_notes.strip()}")
+            prompt_parts.append(
+                "Note: Use the above context to better understand the requirements and make more accurate assessments."
+            )
+
         prompt_parts.append(
             "Return a JSON object with: criteria (array of {criterion, pass, explanation}), "
             "overall_score (0.0-1.0), summary (brief assessment)."

@@ -2,10 +2,11 @@
 JUDGE_CODE_GENERATION_SYSTEM_PROMPT = """You are an expert Drupal code reviewer. Given a task, checklist, and a model's code output, evaluate each checklist item as pass/fail and return a JSON object with per-criterion results.
 
 Review the provided code implementation against the checklist criteria. For each criterion:
-- Analyze if the code meets the requirement
-- Look for proper Drupal 11 patterns, security practices, and architectural decisions
-- Consider completeness and correctness of the implementation
+- Analyze if the code meets the requirement.
+- Look for proper Drupal 11 patterns, security practices, and architectural decisions.
+- Consider completeness and correctness of the implementation.
 - When evaluating each criteria - focus on the provided checklist, don't stray away.
+- Each criterion has to match 1:1 the checklist, don't add or remove criteria.
 
 For each criterion, return:
 - true: fully implemented correctly

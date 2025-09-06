@@ -6,7 +6,15 @@ from nichebench.metrics.code_generation_metric import DeepEvalCodeGenerationMetr
 
 class MockCodeJudge:
     def score_code_generation(
-        self, *, prompt, generated_code, checklist, model="mock", model_params=None, system_prompt=None
+        self,
+        *,
+        prompt,
+        generated_code,
+        checklist,
+        model="mock",
+        model_params=None,
+        system_prompt=None,
+        judge_notes=None,
     ):
         # More sophisticated mock that evaluates each criterion individually
         criteria_results = []

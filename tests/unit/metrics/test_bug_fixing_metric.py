@@ -6,7 +6,15 @@ from nichebench.metrics.bug_fixing_metric import DeepEvalBugFixingMetric
 
 class MockBugJudge:
     def score_bug_fixing(
-        self, *, bug_description, proposed_fix, checklist, model="mock", model_params=None, system_prompt=None
+        self,
+        *,
+        bug_description,
+        proposed_fix,
+        checklist,
+        model="mock",
+        model_params=None,
+        system_prompt=None,
+        judge_notes=None,
     ):
         # Mock logic: evaluate each criterion based on keywords in the fix
         criteria_results = []

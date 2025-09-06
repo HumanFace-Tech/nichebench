@@ -1,0 +1,3 @@
+[submodule "src/nichebench/frameworks/drupal/data"]
+	path = src/nichebench/frameworks/drupal/data
+	url = git@github.com:HumanFace-Tech/nichebench-data-drupal.git

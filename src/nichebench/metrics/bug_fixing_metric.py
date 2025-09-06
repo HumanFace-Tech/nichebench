@@ -60,6 +60,7 @@ class DeepEvalBugFixingMetric(BaseMetric):
             proposed_fix = getattr(test_case, "actual_output", "") or ""
             checklist = getattr(test_case, "checklist", [])
             judge_system_prompt = getattr(test_case, "judge_system_prompt", None)
+            judge_notes = getattr(test_case, "judge_notes", None)
 
             # Use the score_bug_fixing method
             res = self.judge.score_bug_fixing(
@@ -69,6 +70,7 @@ class DeepEvalBugFixingMetric(BaseMetric):
                 model=self.judge_model or "openai/gpt-4o",
                 model_params=self.judge_params,
                 system_prompt=judge_system_prompt,
+                judge_notes=judge_notes,
             )
 
             # Extract overall score

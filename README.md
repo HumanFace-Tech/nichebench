@@ -117,6 +117,24 @@ nichebench/
     └── utils/                  # Helpers
 ```
 
+### 🔒 Private Test Data
+
+Test data for frameworks is stored in private repositories as Git submodules to prevent it from being crawled and incorporated into AI training datasets. This preserves benchmark integrity while keeping the evaluation framework open source.
+
+**For new users**: Clone with submodules to get test data access:
+
+```bash
+git clone --recursive git@github.com:HumanFace-Tech/nichebench.git
+```
+
+**For existing clones**: Initialize submodules:
+
+```bash
+git submodule update --init --recursive
+```
+
+> **Note**: Access to private test data repositories is granted on a collaboration basis. The framework structure and evaluation prompts remain publicly available.
+
 ## 🔧 Development
 
 ```bash

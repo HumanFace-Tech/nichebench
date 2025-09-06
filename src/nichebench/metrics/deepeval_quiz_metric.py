@@ -62,6 +62,7 @@ class DeepEvalQuizMetric(BaseMetric):
             # Forward judge_model and allow frameworks to provide a custom
             # judge_system_prompt via the test_case if present (see runner).
             judge_system_prompt = getattr(test_case, "judge_system_prompt", None)
+            judge_notes = getattr(test_case, "judge_notes", None)
             res = self.judge.score_quiz(
                 question=question,
                 choices=[],
@@ -70,6 +71,7 @@ class DeepEvalQuizMetric(BaseMetric):
                 model=self.judge_model,
                 model_params=self.judge_params,
                 system_prompt=judge_system_prompt,
+                judge_notes=judge_notes,
             )
             passed = bool(res.get("pass", False))
             self.score = 1.0 if passed else 0.0

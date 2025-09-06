@@ -60,6 +60,7 @@ class DeepEvalCodeGenerationMetric(BaseMetric):
             generated_code = getattr(test_case, "actual_output", "") or ""
             checklist = getattr(test_case, "checklist", [])
             judge_system_prompt = getattr(test_case, "judge_system_prompt", None)
+            judge_notes = getattr(test_case, "judge_notes", None)
 
             # Use the new score_code_generation method
             judge_model_str = self.judge_model or self.model or "openai/gpt-4o"
@@ -70,6 +71,7 @@ class DeepEvalCodeGenerationMetric(BaseMetric):
                 model=judge_model_str,
                 model_params=self.judge_params,
                 system_prompt=judge_system_prompt,
+                judge_notes=judge_notes,
             )
 
             # Extract overall score

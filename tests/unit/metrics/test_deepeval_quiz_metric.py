@@ -5,7 +5,18 @@ from nichebench.metrics.deepeval_quiz_metric import DeepEvalQuizMetric
 
 
 class MockJudge:
-    def score_quiz(self, *, question, choices, gold, candidate, model="mock", model_params=None, system_prompt=None):
+    def score_quiz(
+        self,
+        *,
+        question,
+        choices,
+        gold,
+        candidate,
+        model="mock",
+        model_params=None,
+        system_prompt=None,
+        judge_notes=None
+    ):
         # Simple mock: extract letter and compare
         selected = None
         import re
