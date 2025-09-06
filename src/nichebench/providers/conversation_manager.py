@@ -104,7 +104,6 @@ class ConversationManager:
         max_repetitions = max(chunk_counts.values()) if chunk_counts else 0
 
         if max_repetitions > 3:
-            print(f"DEBUG: Found chunk repeated {max_repetitions} times")
             return True
 
         return False

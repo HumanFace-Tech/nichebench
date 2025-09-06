@@ -42,7 +42,7 @@ class LiteLLMJudge:
         prompt_parts.append(f"Question: {question}")
         if choices_text:
             prompt_parts.append(f"Choices:\n{choices_text}")
-        prompt_parts.append(f"Gold: {gold}")
+        prompt_parts.append(f"Gold (correct answer): {gold}")
         prompt_parts.append(f"Model answer: {candidate}")
 
         # Add judge notes if provided

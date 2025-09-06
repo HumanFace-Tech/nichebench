@@ -14,6 +14,3 @@ choices:
   - D) { fourth option - another plausible but incorrect approach }
 
 correct_choice: C
-
-judge_notes: |
-  { optional explanation for the judge about why the correct answer is right and why the other options are wrong - helpful for edge cases or when the reasoning might not be obvious }

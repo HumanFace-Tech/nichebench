@@ -5,7 +5,7 @@ Rich report rendering for NicheBench runs.
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import List, Mapping, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Tuple
 
 from rich.console import Console
 from rich.panel import Panel
@@ -54,7 +54,7 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
             style="cyan" if key in ("framework", "category", "model", "judge") else "white",
         )
 
-    row = []
+    table_row = []
     for key in display_keys:
         if key == "results":
             # Always construct the results column from passed/partial/failed data
@@ -70,23 +70,23 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
             if failed > 0:
                 results_parts.append(f"[bold red]❌ {failed}[/bold red]")
 
-            row.append("\n".join(results_parts) if results_parts else "0")
+            table_row.append("\n".join(results_parts) if results_parts else "0")
         elif key == "avg_score":
             # Always try to show average score
             avg_score = summary.get("avg_score", 0.0)
             score_percent = int(avg_score * 100)
             if score_percent > 66:
-                row.append(f"[bold green]{score_percent}%[/bold green]")
+                table_row.append(f"[bold green]{score_percent}%[/bold green]")
             elif score_percent >= 33:
-                row.append(f"[bold yellow]{score_percent}%[/bold yellow]")
+                table_row.append(f"[bold yellow]{score_percent}%[/bold yellow]")
             else:
-                row.append(f"[bold red]{score_percent}%[/bold red]")
+                table_row.append(f"[bold red]{score_percent}%[/bold red]")
         elif key in summary:
             val = summary[key]
-            row.append(str(val))
+            table_row.append(str(val))
         else:
-            row.append("N/A")
-    table.add_row(*row)
+            table_row.append("N/A")
+    table.add_row(*table_row)
     console.print(table)
 
     # Optionally show per-test breakdown if details_path is given
@@ -116,37 +116,58 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
             groups[group_key(row)].append(row)
 
         for (fw, cat, mut, judge), rows in groups.items():
-            # Convert to list of dicts for type safety
-            dict_rows = [dict(row) for row in rows if isinstance(row, Mapping)]
-            # Consistent header formatting and width
+            # rows are already Mapping objects from the filtering above
+
+            # Count failed tests for this group
+            failed_count = 0
+            for row in rows:
+                if cat in ("code_generation", "bug_fixing"):
+                    judge_output = row.get("judge_output", {})
+                    if isinstance(judge_output, dict):
+                        score = judge_output.get("overall_score", 0.0)
+                        if score <= 0.66:
+                            failed_count += 1
+                    else:
+                        if not row.get("pass", False):
+                            failed_count += 1
+                else:
+                    if not row.get("pass", False):
+                        failed_count += 1
+
+            # Skip if no failures to show
+            if failed_count == 0:
+                continue  # Consistent header formatting and width with failure count
             header_text = (
                 f"[bold]Model:[/bold] [magenta]{mut}[/magenta]  |  "
                 f"[bold]Judged by:[/bold] [cyan]{judge}[/cyan]  |  "
                 f"[bold]Framework:[/bold] [green]{fw}[/green]  |  "
-                f"[bold]Category:[/bold] [yellow]{cat}[/yellow]"
+                f"[bold]Category:[/bold] [yellow]{cat}[/yellow]  |  "
+                f"[bold red]❌ Failed Tests: {failed_count}[/bold red]"
             )
 
             # Create different table layouts based on category
             if cat == "quiz":
-                _render_quiz_details_table(console, header_text, dict_rows)
+                _render_quiz_details_table(console, header_text, rows)
             elif cat in ("code_generation", "bug_fixing"):
-                _render_code_details_table(console, header_text, dict_rows, cat)
+                _render_code_details_table(console, header_text, rows, cat)
             else:
                 # Fallback for unknown categories
-                _render_generic_details_table(console, header_text, dict_rows)
+                _render_generic_details_table(console, header_text, rows)
 
 
-def _render_quiz_details_table(console: Console, header_text: str, rows: List[dict]):
+def _render_quiz_details_table(console: Console, header_text: str, rows: List[Mapping]):
     """Render details table for quiz category."""
     dtable = Table(show_lines=True, header_style="bold blue", padding=(0, 1))
-    dtable.add_column("🧪 Test ID", style="yellow", width=15)
+    dtable.add_column("🧪 Test ID", style="yellow", width=25)
     dtable.add_column("❓ Question", style="white", width=50, overflow="fold")
     dtable.add_column("Answer", style="bold", justify="center", width=8)
     dtable.add_column("Gold", style="cyan", justify="center", width=8)
     dtable.add_column("Result", style="bold", justify="center", width=10)
     dtable.add_column("💬 Explanation", style="dim", width=50, overflow="fold")
 
-    for row in rows[:10]:  # Show up to 10 for now
+    # Show only failed tests
+    failed_rows = [row for row in rows if not row.get("pass", False)]
+    for row in failed_rows:
         test_id = row.get("test_id", "?")
 
         # Get question from input (truncated)
@@ -194,7 +215,7 @@ def _render_quiz_details_table(console: Console, header_text: str, rows: List[di
     )
 
 
-def _render_code_details_table(console: Console, header_text: str, rows: List[dict], category: str):
+def _render_code_details_table(console: Console, header_text: str, rows: List[Mapping], category: str):
     """Render details table for code_generation and bug_fixing categories."""
     dtable = Table(show_lines=True, header_style="bold blue", padding=(0, 1))
     dtable.add_column("🧪 Test ID", style="yellow", width=20)
@@ -203,7 +224,21 @@ def _render_code_details_table(console: Console, header_text: str, rows: List[di
     dtable.add_column("✅ Criteria", style="cyan", justify="left", width=12)
     dtable.add_column("💭 Judge Summary", style="dim", width=50, overflow="fold")
 
-    for row in rows[:10]:  # Show up to 10 for now
+    # Show only failed tests (score <= 66% for code/bug fixing)
+    failed_rows = []
+    for row in rows:
+        judge_output = row.get("judge_output", {})
+        if isinstance(judge_output, dict):
+            score = judge_output.get("overall_score", 0.0)
+            # Consider failed if score <= 66%
+            if score <= 0.66:
+                failed_rows.append(row)
+        else:
+            # Fallback to pass/fail
+            if not row.get("pass", False):
+                failed_rows.append(row)
+
+    for row in failed_rows:
         test_id = row.get("test_id", "?")
 
         # Get test summary from the row (if available)
@@ -268,14 +303,16 @@ def _render_code_details_table(console: Console, header_text: str, rows: List[di
     )
 
 
-def _render_generic_details_table(console: Console, header_text: str, rows: List[dict]):
+def _render_generic_details_table(console: Console, header_text: str, rows: List[Mapping]):
     """Fallback details table for unknown categories."""
     dtable = Table(show_lines=True, header_style="bold blue", padding=(0, 1))
     dtable.add_column("🧪 Test ID", style="yellow", width=20)
     dtable.add_column("📊 Result", style="bold", justify="center", width=10)
     dtable.add_column("💭 Output", style="dim", width=80, overflow="fold")
 
-    for row in rows[:10]:
+    # Show only failed tests
+    failed_rows = [row for row in rows if not row.get("pass", False)]
+    for row in failed_rows:
         test_id = row.get("test_id", "?")
         passed = row.get("pass", False)
         result_text = "[green]✅[/green]" if passed else "[red]❌[/red]"

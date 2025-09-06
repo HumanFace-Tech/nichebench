@@ -80,11 +80,6 @@ class LiteLLMClient:
 
         if self.litellm_available and LITELLM_MODULE:
             try:
-                print(
-                    f"DEBUG: Calling LiteLLM with model={model}, timeout={self.timeout}, "
-                    f"num_retries={self.retry_attempts}, stream={use_streaming}"
-                )
-
                 # Use litellm.completion() API with built-in retry
                 # Adjust temperature for models that don't support 0.0
                 temp = 1.0 if "gpt-5" in model and temperature == 0.0 else temperature
@@ -118,7 +113,6 @@ class LiteLLMClient:
 
                 # Handle streaming vs non-streaming responses
                 if use_streaming:
-                    print("DEBUG: Collecting streaming chunks...")
                     content_parts = []
                     for chunk in response:
                         if hasattr(chunk, "choices") and getattr(chunk, "choices", None):
@@ -129,7 +123,6 @@ class LiteLLMClient:
                                     content_parts.append(delta_content)
 
                     content = "".join(content_parts)
-                    print(f"DEBUG: Collected {len(content)} characters from stream")
                     return {"model": model, "output": content}
                 else:
                     # Regular non-streaming response
@@ -138,7 +131,6 @@ class LiteLLMClient:
                         if hasattr(first_choice, "message") and getattr(first_choice, "message", None):
                             content = getattr(first_choice.message, "content", None)  # type: ignore
                             if content:
-                                print(f"DEBUG: Successfully extracted {len(content)} characters")
                                 return {"model": model, "output": content}
                         # Alternative structure handling
                         content = str(first_choice)

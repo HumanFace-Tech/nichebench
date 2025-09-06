@@ -116,9 +116,7 @@ def run_agentic_mut(
             initial_user_message = turn.content
             break
 
-    conversation_summary = conversation.get_conversation_summary()
-    print(f"DEBUG: Conversation completed - {conversation_summary}")
-
+    # conversation_summary = conversation.get_conversation_summary()  # Currently unused
     return final_output, initial_user_message or "Multi-turn conversation"
 
 
