@@ -18,7 +18,7 @@ class TestNetworkConfiguration:
         config = NicheBenchConfig()
         network_config = config.get_network_config()
 
-        expected_defaults = {"timeout": 120, "retry_attempts": 5, "retry_delay": 3.0}
+        expected_defaults = {"timeout": 600, "retry_attempts": 5, "retry_delay": 3.0}
 
         for key, expected_value in expected_defaults.items():
             assert network_config[key] == expected_value, f"Default {key} should be {expected_value}"

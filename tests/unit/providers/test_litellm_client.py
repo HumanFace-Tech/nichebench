@@ -64,14 +64,14 @@ def test_parameter_merging_precedence():
     assert resp["output"] == "[Error: model did not return a response]"
 
 
-@patch("nichebench.providers.litellm_client.litellm")
-def test_reasoning_parameters_passthrough(mock_litellm):
+@patch("nichebench.providers.litellm_client.LITELLM_MODULE")
+def test_reasoning_parameters_passthrough(mock_litellm_module):
     """Test that reasoning parameters are passed to litellm when available."""
     # Mock successful completion
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
     mock_response.choices[0].message.content = "Response content"
-    mock_litellm.completion.return_value = mock_response
+    mock_litellm_module.completion.return_value = mock_response
 
     client = LiteLLMClient()
     client.litellm_available = True
@@ -79,18 +79,18 @@ def test_reasoning_parameters_passthrough(mock_litellm):
     resp = client.generate("test prompt", model="openai/o1-preview", reasoning_effort="medium", reasoning_format="json")
 
     # Verify litellm.completion was called with reasoning params
-    mock_litellm.completion.assert_called_once()
-    call_args = mock_litellm.completion.call_args[1]
+    mock_litellm_module.completion.assert_called_once()
+    call_args = mock_litellm_module.completion.call_args[1]
     assert call_args["reasoning_effort"] == "medium"
     assert call_args["reasoning_format"] == "json"
     assert resp["output"] == "Response content"
 
 
-@patch("nichebench.providers.litellm_client.litellm")
-def test_litellm_error_fallback(mock_litellm):
+@patch("nichebench.providers.litellm_client.LITELLM_MODULE")
+def test_litellm_error_fallback(mock_litellm_module):
     """Test fallback behavior when litellm raises an exception."""
     # Make litellm.completion raise an exception
-    mock_litellm.completion.side_effect = Exception("API Error")
+    mock_litellm_module.completion.side_effect = Exception("API Error")
 
     client = LiteLLMClient()
     client.litellm_available = True
@@ -98,7 +98,8 @@ def test_litellm_error_fallback(mock_litellm):
     resp = client.generate("test prompt", model="groq/gemma2-9b-it")
 
     # Should return an explicit error marker and preserve model id
-    assert resp["output"].startswith("[Error: LiteLLM error:")
+    assert resp["output"].startswith("[Error: LiteLLM error")
+    assert "API Error" in resp["output"]
     assert resp["model"] == "groq/gemma2-9b-it"
 
 

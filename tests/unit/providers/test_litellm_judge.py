@@ -146,6 +146,6 @@ def test_score_quiz_prompt_structure():
     assert "A. London" in prompt
     assert "B. Paris" in prompt
     assert "C. Berlin" in prompt
-    assert "Gold: B" in prompt
+    assert "Gold (correct answer): B" in prompt
     assert "Model answer: The capital is Paris" in prompt
     assert "Return a JSON object" in prompt
