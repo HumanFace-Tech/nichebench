@@ -138,7 +138,7 @@ class TestNetworkConfiguration:
             network_config = config.get_network_config()
 
             # Should use defaults
-            assert network_config["timeout"] == 120
+            assert network_config["timeout"] == 600
             assert network_config["retry_attempts"] == 5
             assert network_config["retry_delay"] == 3.0
 
@@ -156,7 +156,7 @@ class TestNetworkConfiguration:
             network_config = config.get_network_config()
 
             # Should use all defaults
-            assert network_config["timeout"] == 120
+            assert network_config["timeout"] == 600
             assert network_config["retry_attempts"] == 5
             assert network_config["retry_delay"] == 3.0
 

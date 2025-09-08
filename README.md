@@ -5,10 +5,11 @@ NicheBench is a lightweight, extensible CLI framework for benchmarking AI models
 ## ✨ Key Features
 
 - **🎯 LLM-as-a-Judge**: All tasks scored by a second LLM with custom prompts (no regex/heuristics)
-- **� 3-Value Scoring**: Pass (>66%), Partial (33-66%), Fail (<33%) for nuanced evaluation
+- **📊 3-Value Scoring**: Pass (>66%), Partial (33-66%), Fail (<33%) for nuanced evaluation
 - **🤖 Multi-Turn Conversations**: Agentic code generation with iterative refinement
+- **⚡ Parallel Execution**: Configurable parallelism with beautiful worker progress visualization
 - **🛡️ Runaway Protection**: Automatic detection and handling of repetitive model responses
-- **�📦 Framework Packs**: Plug-and-play support for frameworks (Drupal first, others to follow)
+- **📦 Framework Packs**: Plug-and-play support for frameworks (Drupal first, others to follow)
 - **⚙️ Configuration-Driven**: YAML-based configuration with profiles for different evaluation scenarios
 - **🔧 Provider Agnostic**: Works with OpenAI, Groq, Anthropic, etc. via `litellm`
 - **🎨 Rich CLI**: Beautiful progress bars, tables, and interactive reporting with stacked results
@@ -67,6 +68,10 @@ judge:
   parameters:
     temperature: 1.0
     max_tokens: 1024
+
+# Evaluation settings
+evaluation:
+  parallelism: 1        # Number of parallel workers (1 = sequential)
 
 # Configuration profiles for different scenarios
 profiles:
