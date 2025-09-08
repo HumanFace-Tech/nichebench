@@ -43,8 +43,11 @@ def all(
     network_config = config.get_network_config()
     results_config = config.get_results_config()
 
-    # Create test executor
-    executor = TestExecutor(framework, category, mut_config, judge_config, network_config)
+    # Extract parallelism setting
+    parallelism = eval_config.get("parallelism", 1)
+
+    # Create test executor with parallelism support
+    executor = TestExecutor(framework, category, mut_config, judge_config, network_config, parallelism)
 
     render_run_header(console, executor.mut_model_str, executor.judge_model_str, profile)
 
@@ -68,27 +71,19 @@ def all(
     # Setup results directory
     details_path, summary_path, outdir = executor.setup_results_directory(results_config)
 
-    # Execute tests with clean, elegant code
-    results = []
+    # Execute tests with elegant parallel support
+    with LiveTestRunner(console, framework, category, len(testcases), parallelism) as runner:
+        # Execute all tests (sequentially or in parallel based on config)
+        results = executor.execute_tests_parallel(testcases, runner)
 
-    with LiveTestRunner(console, framework, category, len(testcases)) as runner:
-        for tc in testcases:
-            runner.start_test(tc.id)
-
-            # Execute single test - all complexity is encapsulated in executor
-            result = executor.execute_test(tc, runner)
-            results.append(result)
-
-            # Save incrementally
+        # Save all results incrementally
+        for result in results:
             executor.save_incremental_result(result, details_path)
 
-            # Update summary
-            executor.update_summary(results, summary_path, profile, eval_config)
+        # Update final summary
+        executor.update_summary(results, summary_path, profile, eval_config)
 
-            # Show completion
-            runner.finish_test(tc.id, result.passed, result.error)
-
-        # Show final summary
+        # Show completion summary
         runner.show_summary()
 
     # Show report immediately after run

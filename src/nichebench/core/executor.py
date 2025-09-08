@@ -5,8 +5,10 @@ and clear separation of concerns.
 """
 
 import importlib.util
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
 from deepeval.test_case import LLMTestCase
@@ -258,7 +260,7 @@ class JudgeRunner:
 
 
 class TestExecutor:
-    """Main test execution orchestrator."""
+    """Main test execution orchestrator with parallel execution support."""
 
     def __init__(
         self,
@@ -267,9 +269,11 @@ class TestExecutor:
         mut_config: Dict[str, Any],
         judge_config: Dict[str, Any],
         network_config: Dict[str, Any],
+        parallelism: int = 1,
     ):
         self.framework = framework
         self.category = category
+        self.parallelism = parallelism
         self.config = get_config()
 
         # Create model strings
@@ -288,6 +292,9 @@ class TestExecutor:
         # Load prompts
         self.system_prompt = self._load_system_prompt()
         self.judge_system_prompt = self._load_judge_system_prompt()
+
+        # Thread-safe lock for progress updates
+        self._progress_lock = Lock()
 
     def _load_system_prompt(self) -> Optional[str]:
         """Load MUT system prompt for the category."""
@@ -367,6 +374,104 @@ class TestExecutor:
             result.passed = False
 
         return result
+
+    def execute_tests_parallel(self, test_cases: List[TestCaseSpec], runner=None) -> List[TestResult]:
+        """Execute multiple test cases with parallel support."""
+        if self.parallelism == 1:
+            # Sequential execution - use the original flow for compatibility
+            sequential_results: List[TestResult] = []
+            for test_case in test_cases:
+                if runner:
+                    runner.start_test(test_case.id)
+
+                result = self.execute_test(test_case, runner)
+                sequential_results.append(result)
+
+                if runner:
+                    runner.finish_test(test_case.id, result.passed, result.error)
+
+            return sequential_results
+
+        # Parallel execution
+        parallel_results: List[Optional[TestResult]] = [None] * len(test_cases)  # Pre-allocate to maintain order
+
+        def execute_with_index(index_and_test):
+            index, test_case = index_and_test
+            # Create a thread-safe progress callback
+            safe_runner = self._create_thread_safe_runner(runner, index, len(test_cases))
+            return index, self.execute_test(test_case, safe_runner)
+
+        with ThreadPoolExecutor(max_workers=self.parallelism) as executor:
+            # Submit all tasks
+            future_to_index = {
+                executor.submit(execute_with_index, (i, test_case)): i for i, test_case in enumerate(test_cases)
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_index):
+                index, result = future.result()
+                parallel_results[index] = result
+
+                # Thread-safe progress update
+                if runner:
+                    with self._progress_lock:
+                        worker_id = index % self.parallelism
+                        runner.finish_worker_test(worker_id, result.test_case.id, result.passed)
+                        runner.advance_progress(1)
+
+                        # Update main progress description
+                        runner.progress.update(
+                            runner.main_task,
+                            description=f"[cyan]Running {runner.framework}/{runner.category}[/cyan] - "
+                            f"✅ {runner.passed_tests} passed, ❌ {runner.failed_tests} failed",
+                        )
+
+        # Filter out None values and return
+        final_results: List[TestResult] = [r for r in parallel_results if r is not None]
+        return final_results
+
+    def _create_thread_safe_runner(self, runner, test_index: int, total_tests: int):
+        """Create a thread-safe wrapper for progress updates."""
+        if not runner:
+            return None
+
+        # Use test_index as worker_id for parallel display
+        worker_id = test_index % self.parallelism
+
+        class ThreadSafeRunner:
+            def __init__(self, original_runner, lock, worker_id, test_index, total_tests):
+                self._original = original_runner
+                self._lock = lock
+                self._worker_id = worker_id
+                self._test_index = test_index
+                self._total = total_tests
+
+            def update_test_status(self, message: str, step: int):
+                with self._lock:
+                    # Extract test ID from message
+                    test_id = "test"
+                    if "🧪" in message:
+                        # Extract test ID from format "[yellow]🧪 {test_id}[/yellow] - ..."
+                        parts = message.split("🧪")
+                        if len(parts) > 1:
+                            test_part = parts[1].split("[/yellow]")[0].strip()
+                            test_id = test_part
+
+                    # Convert message to worker status
+                    if "Running MUT" in message:
+                        status = "Running MUT"
+                    elif "Running Judge" in message:
+                        status = "Running Judge"
+                    else:
+                        status = "Processing"
+
+                    self._original.update_worker_status(self._worker_id, test_id, status, step)
+
+            def advance_progress(self, amount: int):
+                # Don't call this directly in threaded context
+                pass
+
+        return ThreadSafeRunner(runner, self._progress_lock, worker_id, test_index, total_tests)
 
     def setup_results_directory(self, results_config: Dict[str, Any]) -> Tuple[Path, Path, Path]:
         """Setup results directory and return paths."""

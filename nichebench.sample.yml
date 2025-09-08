@@ -29,7 +29,7 @@ judge:
 evaluation:
   save_full_prompts: true       # Include full input prompts in results
   save_raw_outputs: true        # Include raw model outputs
-  parallel_workers: 1           # Number of parallel evaluation workers
+  parallelism: 1                # Number of parallel test executions (1 = sequential)
 
 # Network and reliability settings
 network:
