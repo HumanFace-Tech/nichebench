@@ -10,6 +10,8 @@ import random
 import time
 from typing import Any
 
+from nichebench.utils.io import strip_think_tags
+
 try:
     import litellm
 
@@ -123,7 +125,7 @@ class LiteLLMClient:
                                     content_parts.append(delta_content)
 
                     content = "".join(content_parts)
-                    return {"model": model, "output": content}
+                    return {"model": model, "output": strip_think_tags(content)}
                 else:
                     # Regular non-streaming response
                     if hasattr(response, "choices") and getattr(response, "choices", None):
@@ -131,12 +133,12 @@ class LiteLLMClient:
                         if hasattr(first_choice, "message") and getattr(first_choice, "message", None):
                             content = getattr(first_choice.message, "content", None)  # type: ignore
                             if content:
-                                return {"model": model, "output": content}
+                                return {"model": model, "output": strip_think_tags(content)}
                         # Alternative structure handling
                         content = str(first_choice)
-                        return {"model": model, "output": content}
+                        return {"model": model, "output": strip_think_tags(content)}
                     else:
-                        return {"model": model, "output": str(response)}
+                        return {"model": model, "output": strip_think_tags(str(response))}
 
             except Exception as e:
                 # LiteLLM handles retries internally, so if we get here, all retries failed
