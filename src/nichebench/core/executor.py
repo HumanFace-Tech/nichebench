@@ -375,7 +375,9 @@ class TestExecutor:
 
         return result
 
-    def execute_tests_parallel(self, test_cases: List[TestCaseSpec], runner=None) -> List[TestResult]:
+    def execute_tests_parallel(
+        self, test_cases: List[TestCaseSpec], runner=None, save_callback=None, summary_callback=None
+    ) -> List[TestResult]:
         """Execute multiple test cases with parallel support."""
         if self.parallelism == 1:
             # Sequential execution - use the original flow for compatibility
@@ -387,6 +389,12 @@ class TestExecutor:
                 result = self.execute_test(test_case, runner)
                 sequential_results.append(result)
 
+                # Save incrementally in sequential mode
+                if save_callback:
+                    save_callback(result)
+                if summary_callback:
+                    summary_callback(sequential_results)
+
                 if runner:
                     runner.finish_test(test_case.id, result.passed, result.error)
 
@@ -394,6 +402,7 @@ class TestExecutor:
 
         # Parallel execution
         parallel_results: List[Optional[TestResult]] = [None] * len(test_cases)  # Pre-allocate to maintain order
+        completed_results: List[TestResult] = []  # For incremental callbacks
 
         def execute_with_index(index_and_test):
             index, test_case = index_and_test
@@ -411,6 +420,17 @@ class TestExecutor:
             for future in as_completed(future_to_index):
                 index, result = future.result()
                 parallel_results[index] = result
+                completed_results.append(result)
+
+                # Save result immediately as it completes (thread-safe)
+                if save_callback:
+                    with self._progress_lock:
+                        save_callback(result)
+
+                # Update summary with current completed results
+                if summary_callback:
+                    with self._progress_lock:
+                        summary_callback(completed_results)
 
                 # Thread-safe progress update
                 if runner:

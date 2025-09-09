@@ -73,15 +73,15 @@ def all(
 
     # Execute tests with elegant parallel support
     with LiveTestRunner(console, framework, category, len(testcases), parallelism) as runner:
-        # Execute all tests (sequentially or in parallel based on config)
-        results = executor.execute_tests_parallel(testcases, runner)
-
-        # Save all results incrementally
-        for result in results:
+        # Define callbacks for incremental saving and summary updates
+        def save_result(result):
             executor.save_incremental_result(result, details_path)
 
-        # Update final summary
-        executor.update_summary(results, summary_path, profile, eval_config)
+        def update_summary_callback(results):
+            executor.update_summary(results, summary_path, profile, eval_config)
+
+        # Execute all tests (sequentially or in parallel based on config)
+        executor.execute_tests_parallel(testcases, runner, save_result, update_summary_callback)
 
         # Show completion summary
         runner.show_summary()
