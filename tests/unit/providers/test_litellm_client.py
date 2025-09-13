@@ -76,7 +76,7 @@ def test_reasoning_parameters_passthrough(mock_litellm_module):
     client = LiteLLMClient()
     client.litellm_available = True
 
-    resp = client.generate("test prompt", model="openai/o1-preview", reasoning_effort="medium", reasoning_format="json")
+    resp = client.generate("test prompt", model="openai/gpt-5", reasoning_effort="medium", reasoning_format="json")
 
     # Verify litellm.completion was called with reasoning params
     mock_litellm_module.completion.assert_called_once()
