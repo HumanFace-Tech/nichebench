@@ -50,13 +50,16 @@ REPLACE: web/modules/custom/mymodule/src/Controller/MyController.php
 // Complete new file content here
 ```
 
+---
+
 Validation checklist (self-verify before saying FINAL):
 - Coding standards: Drupal coding standards (PHPCS) and PSR-4 autoloading; proper namespaces (Drupal\\<module>\\...)
+- Proper comments and PHPDoc for all functions, classes, methods, and hooks - Drupal style
 - Dependency Injection: No global \\Drupal::service calls in constructors; inject services via container and services.yml
 - Routing & access: routes declared with correct defaults, requirements, and access checks; use access services/policies where applicable
 - Permissions: permissions.yml provided if new permissions are introduced; string translation via $this->t() or injected translator
-- Forms & CSRF: forms extend FormBase/FormConfirmBase; CSRF tokens and proper validation; sanitize/validate user inputs
-- Rendering & cacheability: render arrays with #cache (contexts/tags/max-age) defined; bubbleable metadata preserved
+- Forms & CSRF: forms should extend proper form classes; CSRF tokens and proper validation; sanitize/validate user inputs
+- Rendering & cacheability: render arrays with proper #cache (contexts/tags/max-age) defined; bubbleable metadata preserved, use it when needed
 - Entities & schema: entity definitions complete; storage/schema updates shipped via update hooks; typed data accurate; translatable config declared in schema
 - Plugins & annotations: correct annotations for Block, Field, EventSubscriber, etc.; plugin discovery paths correct
 - Configuration management: default config shipped under config/install; schema files under config/schema; no environment-specific values
@@ -65,9 +68,14 @@ Validation checklist (self-verify before saying FINAL):
 - Logging & errors: use injected logger.channel.<module>; meaningful error handling; avoid fatal errors
 - Deprecations: no deprecated API usage; target Drupal 11 stable APIs
 - Line endings & whitespace: LF line endings; no trailing spaces; newline EOF
+- USE BEST DRUPAL PRACTICES THROUGHOUT - even when the task doesn't explicitly mention them, you should do as if you were writing production code for a major Drupal site.
+
+---
 
 Requirements:
-- No placeholders, pseudo-code, or "TODO" markers. Provide complete, runnable implementations
-- Only include files relevant to this task; do not create unused scaffolding
-- Make reasonable assumptions; proceed without asking questions
-- Output complete working code immediately"""
+- No placeholders, pseudo-code, or "TODO" markers. Provide complete, runnable implementations.
+- Only include files relevant to this task; do not create unused scaffolding.
+- Make reasonable assumptions; proceed without asking questions.
+- Output complete working code immediately - in one shot if possible.
+- Always respond as if you are committing directly to a production Drupal 11 codebase used by thousands of users.
+"""

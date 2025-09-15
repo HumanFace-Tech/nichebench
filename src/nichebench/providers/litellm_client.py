@@ -72,6 +72,9 @@ class LiteLLMClient:
         params = model_params.copy() if model_params else {}
         params.update(kwargs)
 
+        # Extract API base URL for custom endpoints (like Ollama)
+        api_base = params.pop("api_base", None)
+
         # Extract common parameters with defaults
         temperature = params.get("temperature", 0.0)
         max_tokens = params.get("max_tokens", 4096)
@@ -92,11 +95,21 @@ class LiteLLMClient:
                     "messages": messages,  # Use provided messages instead of converting prompt
                     "temperature": temp,
                     "max_tokens": max_tokens,
-                    "top_p": top_p,
                     "timeout": self.timeout,
                     "num_retries": self.retry_attempts,  # Use LiteLLM's built-in retry
                     "stream": use_streaming,  # Enable streaming for large prompts
                 }
+
+                # Filter out unsupported parameters for specific models
+                if "gpt-5" in model:
+                    # GPT-5 doesn't support top_p parameter
+                    pass  # Don't add top_p to completion_args
+                else:
+                    completion_args["top_p"] = top_p
+
+                # Add API base for custom endpoints (Ollama, local servers, etc.)
+                if api_base:
+                    completion_args["api_base"] = api_base
 
                 # Add any additional parameters that litellm supports
                 litellm_params = [

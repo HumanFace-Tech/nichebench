@@ -28,6 +28,9 @@ def all(
     model: str = typer.Option(None, "--model", "-m", help="Override MUT model (e.g., 'groq/gemma2-9b-it')"),
     judge: str = typer.Option(None, "--judge", "-j", help="Override judge model (e.g., 'openai/gpt-5')"),
     profile: str = typer.Option(None, "--profile", "-p", help="Configuration profile to use"),
+    ids: str = typer.Option(
+        None, "--ids", help="Comma-separated list of specific test IDs to run (e.g., 'code_1,code_2')"
+    ),
 ):
     """Run all test cases for a framework/category with configuration-driven models."""
     # Load environment variables from .env file
@@ -67,6 +70,24 @@ def all(
     if not testcases:
         console.print(f"[yellow]No test cases found for {framework}/{category}.[/yellow]")
         raise typer.Exit(0)
+
+    # Filter test cases by IDs if specified
+    if ids:
+        requested_ids = [id_str.strip() for id_str in ids.split(",")]
+        original_count = len(testcases)
+        testcases = [tc for tc in testcases if tc.id in requested_ids]
+
+        # Report on filtering
+        if len(testcases) == 0:
+            console.print(f"[red]No test cases found with IDs: {', '.join(requested_ids)}[/red]")
+            console.print(f"[yellow]Available IDs:[/yellow] {', '.join([tc.id for tc in task.testcases])}")
+            raise typer.Exit(1)
+        elif len(testcases) < len(requested_ids):
+            found_ids = [tc.id for tc in testcases]
+            missing_ids = [id for id in requested_ids if id not in found_ids]
+            console.print(f"[yellow]Warning: Some IDs not found: {', '.join(missing_ids)}[/yellow]")
+
+        console.print(f"[green]Filtered to {len(testcases)} of {original_count} test cases[/green]")
 
     # Setup results directory
     details_path, summary_path, outdir = executor.setup_results_directory(results_config)

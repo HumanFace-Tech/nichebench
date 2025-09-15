@@ -82,6 +82,9 @@ class NicheBenchConfig:
             else:
                 config["model"] = model_override
 
+        # Auto-configure Ollama defaults if provider is ollama
+        self._apply_ollama_defaults(config)
+
         return config
 
     def get_judge_config(self, judge_override: Optional[str] = None, profile: Optional[str] = None) -> Dict[str, Any]:
@@ -131,6 +134,27 @@ class NicheBenchConfig:
     def list_profiles(self) -> list[str]:
         """List available configuration profiles."""
         return list(self._config.get("profiles", {}).keys())
+
+    def _apply_ollama_defaults(self, config: Dict[str, Any]) -> None:
+        """Apply Ollama-specific defaults when provider is 'ollama'."""
+        if config.get("provider") != "ollama":
+            return
+
+        # Ensure parameters exist
+        if "parameters" not in config:
+            config["parameters"] = {}
+
+        # Set default API base for Ollama if not specified
+        if "api_base" not in config["parameters"]:
+            config["parameters"]["api_base"] = "http://localhost:11434"
+
+        # Ollama typically doesn't need some parameters, but we'll let LiteLLM handle it
+        # Set reasonable defaults for Ollama
+        params = config["parameters"]
+        if "temperature" not in params:
+            params["temperature"] = 0.0
+        if "max_tokens" not in params:
+            params["max_tokens"] = 4096
 
 
 # Global config instance

@@ -15,7 +15,8 @@ class TestNetworkConfiguration:
 
     def test_default_network_settings(self):
         """Test that default network settings are applied."""
-        config = NicheBenchConfig()
+        # Force defaults by using a non-existent config path
+        config = NicheBenchConfig(Path("/non/existent/config.yml"))
         network_config = config.get_network_config()
 
         expected_defaults = {"timeout": 600, "retry_attempts": 5, "retry_delay": 3.0}
