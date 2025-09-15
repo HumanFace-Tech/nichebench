@@ -29,6 +29,9 @@ poetry run nichebench list drupal
 # Run evaluations (uses configuration defaults)
 poetry run nichebench run drupal quiz
 
+# Run specific test cases by ID
+poetry run nichebench run drupal quiz --ids="drupal_quiz_001,drupal_quiz_003"
+
 # Run with specific models
 poetry run nichebench run drupal quiz --model groq/llama-3.1-8b-instant --judge openai/gpt-4o
 
