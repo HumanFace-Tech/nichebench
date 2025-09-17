@@ -6,6 +6,7 @@ require network calls.
 """
 
 import json
+import os
 import random
 import time
 from typing import Any
@@ -75,6 +76,11 @@ class LiteLLMClient:
         # Extract API base URL for custom endpoints (like Ollama)
         api_base = params.pop("api_base", None)
 
+        # Store current global api_base to restore later
+        prev_api_base = None
+        if LITELLM_MODULE:
+            prev_api_base = getattr(LITELLM_MODULE, "api_base", None)
+
         # For large prompts, keep streaming disabled to avoid org verification issues
         use_streaming = False  # Disabled due to OpenAI org verification requirements
 
@@ -99,6 +105,9 @@ class LiteLLMClient:
                 # Add API base for custom endpoints (Ollama, local servers, etc.)
                 if api_base:
                     completion_args["api_base"] = api_base
+                    # Temporarily set global api_base for this call only
+                    if LITELLM_MODULE:
+                        setattr(LITELLM_MODULE, "api_base", api_base)
 
                 response = LITELLM_MODULE.completion(**completion_args)
 
@@ -134,6 +143,10 @@ class LiteLLMClient:
                 error_msg = f"[Error: LiteLLM error after {self.retry_attempts} attempts: {e}]"
                 print(f"DEBUG: {error_msg}")
                 return {"model": model, "output": error_msg}
+            finally:
+                # Always restore the previous global api_base state
+                if LITELLM_MODULE:
+                    setattr(LITELLM_MODULE, "api_base", prev_api_base)
 
         # Fallback stub: return a clear error marker rather than echoing the
         # prompt. Echoing made it indistinguishable from a successful model

@@ -133,6 +133,17 @@ class MUTRunner:
                 task_description=task_description, context=context, progress_callback=progress_callback
             )
 
+            # CRITICAL: Reset global litellm.api_base after LangGraph agent finishes
+            # The LangGraph agent uses ChatLiteLLM which sets global state that affects
+            # subsequent judge calls. We need to clear this to prevent 404 errors.
+            try:
+                import litellm
+
+                if hasattr(litellm, "api_base"):
+                    setattr(litellm, "api_base", None)
+            except ImportError:
+                pass  # litellm not available, ignore
+
             # Build comprehensive input message showing the full prompt chain
             input_parts = [
                 f"TASK: {task_description}",
