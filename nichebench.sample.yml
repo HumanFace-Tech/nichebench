@@ -1,6 +1,19 @@
 # NicheBench Configuration
 # This file controls model settings, evaluation parameters, and global behavior
 #
+# Repetition Control:
+# ------------------
+# frequency_penalty (0.0-2.0): Penalizes tokens proportional to how often they appear
+#   - 0.0: No penalty (default)
+#   - 0.2-0.3: Light penalty for subtle repetition reduction
+#   - 0.5-1.0: Moderate penalty for noticeable repetition reduction
+#   - 1.0+: Strong penalty, may reduce quality
+#
+# presence_penalty (0.0-2.0): Penalizes any token that has appeared before
+#   - 0.0: No penalty (default)
+#   - 0.1-0.3: Light penalty for encouraging diversity
+#   - 0.5+: Strong penalty, may reduce coherence
+#
 # Ollama Integration Setup:
 # ------------------------
 # 1. Install Ollama: curl -fsSL https://ollama.ai/install.sh | sh
@@ -28,6 +41,9 @@ mut:
     temperature: 0
     max_tokens: 32768
     top_p: 1.0
+    frequency_penalty: 0.2              # Reduce repetition by penalizing frequent tokens (0.0-2.0)
+    presence_penalty: 0.1               # Encourage diversity by penalizing repeated tokens (0.0-2.0)
+    tools: []                           # Empty tools array to force text-only responses
     # Note: reasoning parameters only work with o1 models
     # reasoning_effort: "medium"  # "low", "medium", "high", or null to disable
     # reasoning_format: "hidden"  # "hidden" or "visible" - hidden is ideal for MUT

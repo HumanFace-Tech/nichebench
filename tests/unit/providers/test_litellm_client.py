@@ -38,7 +38,7 @@ def test_generate_fallback_echo():
     # Force unavailable client to use stub
     client.litellm_available = False
     start = time.time()
-    resp = client.generate("hello world", model="openai/gpt-5")
+    resp = client.generate("hello world", model="openai/gpt-4o")
     end = time.time()
     # Ensure stub returned an explicit error marker instead of echoing input
     assert resp["output"] == "[Error: model did not return a response]"
@@ -66,7 +66,7 @@ def test_parameter_merging_precedence():
 
 @patch("nichebench.providers.litellm_client.LITELLM_MODULE")
 def test_reasoning_parameters_passthrough(mock_litellm_module):
-    """Test that reasoning parameters are passed to litellm when available."""
+    """Test that reasoning parameters are passed to litellm when available for GPT-5."""
     # Mock successful completion
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
@@ -79,10 +79,12 @@ def test_reasoning_parameters_passthrough(mock_litellm_module):
     resp = client.generate("test prompt", model="openai/gpt-5", reasoning_effort="medium", reasoning_format="json")
 
     # Verify litellm.completion was called with reasoning params
+    # Note: GPT-5 filtering removes reasoning_format, only keeps reasoning_effort
     mock_litellm_module.completion.assert_called_once()
     call_args = mock_litellm_module.completion.call_args[1]
     assert call_args["reasoning_effort"] == "medium"
-    assert call_args["reasoning_format"] == "json"
+    assert "reasoning_format" not in call_args  # Filtered out for GPT-5
+    assert call_args["temperature"] == 1.0  # GPT-5 requires temperature=1.0
     assert resp["output"] == "Response content"
 
 
@@ -109,7 +111,7 @@ def test_temperature_adjustment_for_gpt5():
     client.litellm_available = False  # Use stub to avoid actual API calls
 
     # This test verifies the logic exists, even though stub doesn't use it
-    resp = client.generate("test", model="openai/gpt-5", model_params={"temperature": 0.0})
+    resp = client.generate("test", model="openai/gpt-5-mini", model_params={"temperature": 0.0})
 
     # With stub, verify it returns the explicit error marker
     assert resp["output"] == "[Error: model did not return a response]"

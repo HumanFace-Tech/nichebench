@@ -162,6 +162,9 @@ NOTES.md
 # Local validation artifacts
 *_validation.json
 
+# Session planning files (local tracking)
+PLAN.yml
+
 # Docker
 docker-compose.override.yml
 

@@ -121,7 +121,7 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
             # Count failed tests for this group
             failed_count = 0
             for row in rows:
-                if cat in ("code_generation", "bug_fixing"):
+                if cat in ("code_generation", "bug_fixing", "code_agent"):
                     judge_output = row.get("judge_output", {})
                     if isinstance(judge_output, dict):
                         score = judge_output.get("overall_score", 0.0)
@@ -148,7 +148,7 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
             # Create different table layouts based on category
             if cat == "quiz":
                 _render_quiz_details_table(console, header_text, rows)
-            elif cat in ("code_generation", "bug_fixing"):
+            elif cat in ("code_generation", "bug_fixing", "code_agent"):
                 _render_code_details_table(console, header_text, rows, cat)
             else:
                 # Fallback for unknown categories
@@ -216,7 +216,7 @@ def _render_quiz_details_table(console: Console, header_text: str, rows: List[Ma
 
 
 def _render_code_details_table(console: Console, header_text: str, rows: List[Mapping], category: str):
-    """Render details table for code_generation and bug_fixing categories."""
+    """Render details table for code_generation, bug_fixing, and code_agent categories."""
     dtable = Table(show_lines=True, header_style="bold blue", padding=(0, 1))
     dtable.add_column("🧪 Test ID", style="yellow", width=20)
     dtable.add_column("📝 Summary", style="white", width=40, overflow="fold")
@@ -224,7 +224,7 @@ def _render_code_details_table(console: Console, header_text: str, rows: List[Ma
     dtable.add_column("✅ Criteria", style="cyan", justify="left", width=12)
     dtable.add_column("💭 Judge Summary", style="dim", width=50, overflow="fold")
 
-    # Show only failed tests (score <= 66% for code/bug fixing)
+    # Show only failed tests (score <= 66% for code/bug fixing/code_agent)
     failed_rows = []
     for row in rows:
         judge_output = row.get("judge_output", {})

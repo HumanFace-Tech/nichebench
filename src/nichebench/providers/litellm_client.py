@@ -75,54 +75,30 @@ class LiteLLMClient:
         # Extract API base URL for custom endpoints (like Ollama)
         api_base = params.pop("api_base", None)
 
-        # Extract common parameters with defaults
-        temperature = params.get("temperature", 0.0)
-        max_tokens = params.get("max_tokens", 4096)
-        top_p = params.get("top_p", 1.0)
-
         # For large prompts, keep streaming disabled to avoid org verification issues
         use_streaming = False  # Disabled due to OpenAI org verification requirements
 
         if self.litellm_available and LITELLM_MODULE:
             try:
                 # Use litellm.completion() API with built-in retry
-                # Adjust temperature for models that don't support 0.0
-                temp = 1.0 if "gpt-5" in model and temperature == 0.0 else temperature
+                # Filter and adjust parameters for model compatibility
+                filtered_params = self._filter_model_parameters(model, params)
 
                 # Build completion arguments
                 completion_args = {
                     "model": model,
                     "messages": messages,  # Use provided messages instead of converting prompt
-                    "temperature": temp,
-                    "max_tokens": max_tokens,
                     "timeout": self.timeout,
                     "num_retries": self.retry_attempts,  # Use LiteLLM's built-in retry
                     "stream": use_streaming,  # Enable streaming for large prompts
                 }
 
-                # Filter out unsupported parameters for specific models
-                if "gpt-5" in model:
-                    # GPT-5 doesn't support top_p parameter
-                    pass  # Don't add top_p to completion_args
-                else:
-                    completion_args["top_p"] = top_p
+                # Add filtered parameters
+                completion_args.update(filtered_params)
 
                 # Add API base for custom endpoints (Ollama, local servers, etc.)
                 if api_base:
                     completion_args["api_base"] = api_base
-
-                # Add any additional parameters that litellm supports
-                litellm_params = [
-                    "presence_penalty",
-                    "frequency_penalty",
-                    "reasoning_effort",
-                    "reasoning_format",
-                    "max_completion_tokens",
-                    "stop",
-                ]
-                for param in litellm_params:
-                    if param in params and params[param] is not None:
-                        completion_args[param] = params[param]
 
                 response = LITELLM_MODULE.completion(**completion_args)
 
@@ -165,6 +141,24 @@ class LiteLLMClient:
         # behavior should be updated to expect an explicit error marker.
         time.sleep(0.01)
         return {"model": model, "output": "[Error: model did not return a response]"}
+
+    def _filter_model_parameters(self, model: str, parameters: dict) -> dict:
+        """Filter parameters based on model capabilities to avoid API errors."""
+        filtered_params = parameters.copy()
+
+        # Handle OpenAI GPT-5 specific constraints
+        if "gpt-5" in model.lower():
+            # GPT-5 requires temperature=1.0 and doesn't support certain parameters
+            filtered_params = {
+                "temperature": 1.0,  # Required to be exactly 1.0
+                "max_tokens": parameters.get("max_tokens", 1024),
+            }
+            # Keep only known supported reasoning parameters for GPT-5
+            for key in ["reasoning_effort"]:  # Remove reasoning_format and reasoning_steps
+                if key in parameters:
+                    filtered_params[key] = parameters[key]
+
+        return filtered_params
 
 
 def parse_json_safe(text: str) -> Any:

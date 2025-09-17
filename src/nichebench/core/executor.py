@@ -1,6 +1,6 @@
 """Clean, elegant test execution engine for NicheBench.
 
-This module provides a unified test execution system with minimal duplication
+This module provides a unified test execution system with no code duplication
 and clear separation of concerns.
 """
 
@@ -19,7 +19,6 @@ from nichebench.core.datamodel import TestCaseSpec
 from nichebench.metrics.bug_fixing_metric import DeepEvalBugFixingMetric
 from nichebench.metrics.code_generation_metric import DeepEvalCodeGenerationMetric
 from nichebench.metrics.deepeval_quiz_metric import DeepEvalQuizMetric
-from nichebench.providers.agentic_mut_composer import AgenticMUTPromptComposer
 from nichebench.providers.litellm_client import LiteLLMClient
 from nichebench.providers.litellm_judge import LiteLLMJudge
 from nichebench.providers.mut_prompt_composer import MUTPromptComposer
@@ -78,7 +77,9 @@ class MUTRunner:
         """
         if category == "quiz":
             return self._run_single_turn(test_case, system_prompt, category)
-        elif category in ("code_generation", "bug_fixing"):
+        elif category == "code_generation":
+            return self._run_single_turn(test_case, system_prompt, category)
+        elif category in ("code_agent", "bug_fixing"):
             return self._run_multi_turn(test_case, system_prompt, category, runner)
         else:
             return self._run_single_turn(test_case, system_prompt, category)
@@ -99,12 +100,59 @@ class MUTRunner:
     def _run_multi_turn(
         self, test_case: TestCaseSpec, system_prompt: Optional[str], category: str, runner=None
     ) -> Tuple[str, str]:
-        """Run multi-turn conversation (code generation, bug fixing)."""
+        """Run multi-turn conversation (bug fixing) or agentic execution (code_agent)."""
         # Start conversation
-        if category == "code_generation":
-            conversation = AgenticMUTPromptComposer.start_code_conversation(test_case, system_prompt)
+        if category == "code_agent":
+            # Use LangGraph agent for proper plan-based execution
+            from nichebench.frameworks.drupal.prompts.CODE_AGENT import (
+                CODE_AGENT_BASE_PROMPT,
+            )
+            from nichebench.providers.langgraph_code_agent import LangGraphCodeAgent
+
+            # Create the LangGraph agent with correct parameters
+            agent = LangGraphCodeAgent(
+                model=self.model_str,
+                custom_llm_params=self.model_config.get("parameters", {}),
+            )
+
+            # Prepare context for the agent
+            context = getattr(test_case, "context", None) or test_case.raw.get("context", "")
+            task_description = getattr(test_case, "prompt", "") or test_case.raw.get("prompt", "")
+
+            # Create progress callback from runner
+            progress_callback = None
+            if runner:
+
+                def update_progress(message: str, step: int):
+                    runner.update_test_status(f"[yellow]🧪 {test_case.id}[/yellow] - {message}", step)
+
+                progress_callback = update_progress
+
+            # Execute the task - returns string result
+            final_output = agent.execute_task(
+                task_description=task_description, context=context, progress_callback=progress_callback
+            )
+
+            # Build comprehensive input message showing the full prompt chain
+            input_parts = [
+                f"TASK: {task_description}",
+            ]
+            if context:
+                input_parts.append(f"CONTEXT: {context}")
+
+            input_parts.extend(
+                [
+                    f"\nSYSTEM PROMPT: {(system_prompt or CODE_AGENT_BASE_PROMPT)[:200]}...",
+                    "\nEXECUTION: LangGraph plan-based code generation",
+                ]
+            )
+
+            initial_user_message = "\n".join(input_parts)
+
+            return final_output, initial_user_message
+
         elif category == "bug_fixing":
-            conversation = AgenticMUTPromptComposer.start_bug_conversation(test_case, system_prompt)
+            conversation = MUTPromptComposer.start_bug_conversation(test_case, system_prompt)
         else:
             raise ValueError(f"Multi-turn not supported for category: {category}")
 
@@ -199,6 +247,17 @@ class JudgeRunner:
         if judge_system_prompt:
             setattr(stc, "judge_system_prompt", judge_system_prompt)
 
+        # Attach additional context for better judge evaluation
+        if hasattr(test_case, "context") and test_case.context:
+            setattr(stc, "context", test_case.context)
+
+        if hasattr(test_case, "summary") and test_case.summary:
+            setattr(stc, "summary", test_case.summary)
+
+        # Attach judge notes if available in test case data
+        if test_case.raw.get("judge_notes"):
+            setattr(stc, "judge_notes", test_case.raw["judge_notes"])
+
         # Create appropriate metric and evaluate
         judge_output: Dict[str, Any] = {}
         passed = False
@@ -218,6 +277,21 @@ class JudgeRunner:
                 judge_output = {"score": score, "explanation": "No detailed explanation available"}
 
         elif category == "code_generation":
+            metric = DeepEvalCodeGenerationMetric(
+                judge=self.judge,
+                judge_model=self.model_str,
+                judge_params=self.model_config.get("parameters", {}),
+            )
+            score = metric.measure(stc)
+            passed = bool(score >= 0.7)  # Default threshold
+
+            if hasattr(metric, "last_judge_response") and metric.last_judge_response is not None:
+                judge_output = metric.last_judge_response
+            else:
+                judge_output = {"score": score, "explanation": "No detailed explanation available"}
+
+        elif category == "code_agent":
+            # Use the same metric as code_generation since we're testing the same capabilities
             metric = DeepEvalCodeGenerationMetric(
                 judge=self.judge,
                 judge_model=self.model_str,
@@ -542,7 +616,7 @@ class TestExecutor:
         # Calculate average score
         total_score = 0.0
         for result in results:
-            if self.category in ("code_generation", "bug_fixing"):
+            if self.category in ("code_generation", "bug_fixing", "code_agent"):
                 judge_output = result.judge_output
                 if isinstance(judge_output, dict):
                     score = judge_output.get("overall_score", 0.0)

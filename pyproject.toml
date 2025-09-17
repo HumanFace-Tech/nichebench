@@ -19,6 +19,11 @@ deepeval = "^3.3.9"
 litellm = "^1.75.8"
 pandas = "^2.3.1"
 pyarrow = "^21.0.0"
+langchain = "^0.3.27"
+langchain-community = "^0.3.29"
+langchain-litellm = "^0.2.2"
+langgraph = "^0.6.7"
+langchain-groq = "^0.3.8"
 
 
 [tool.poetry.group.dev.dependencies]

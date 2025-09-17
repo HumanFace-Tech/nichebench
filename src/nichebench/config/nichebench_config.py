@@ -39,7 +39,7 @@ class NicheBenchConfig:
             "judge": {
                 "provider": "openai",
                 "model": "gpt-5",
-                "parameters": {"temperature": 1.0, "max_tokens": 1024, "top_p": 1.0},
+                "parameters": {"temperature": 1.0, "max_tokens": 1024},  # Removed top_p for GPT-5 compatibility
             },
             "evaluation": {
                 "save_full_prompts": True,
