@@ -47,7 +47,7 @@ YOUR CURRENT ROLE: PLANNER / ARCHITECT
 Create a complete, dependency-ordered implementation plan. You have NO tools; you only plan. Solvers will execute steps with workspace tools.
 
 PLAN OBJECTIVES
-- Produce a cohesive plan in 5–25 concrete steps that delivers a working feature.
+- Produce a cohesive plan in 5-25 concrete steps that delivers a working feature.
 - Each step must be executable in isolation and move the system toward completion.
 - Keep identifiers consistent across the plan (module name, namespaces, IDs).
 
