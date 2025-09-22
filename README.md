@@ -2,6 +2,8 @@
 
 NicheBench is a lightweight, extensible CLI framework for benchmarking AI models on **framework-specific tasks**. Starting with Drupal, it features LLM-as-a-Judge evaluation, configuration-driven model management, and a rich CLI for interactive reporting.
 
+Provided by [HumanFace Tech](https://humanfacetech.com).
+
 ## ✨ Key Features
 
 - **🎯 LLM-as-a-Judge**: All tasks scored by a second LLM with custom prompts (no regex/heuristics)
@@ -94,6 +96,38 @@ profiles:
 
 **Configuration Precedence**: CLI args > Environment variables > Profile > Defaults
 
+## 📊 Results Showcase
+
+> Latest benchmark results from September 2025
+
+### 🧠 Drupal Quiz Performance
+
+Test models on Drupal-specific knowledge across multiple choice questions covering APIs, best practices, and advanced concepts.
+
+![Drupal Quiz Results](assets/results-quiz-25-sept.png)
+
+**Key Insights:**
+
+- **GPT-4o leads** with 80% accuracy on complex Drupal knowledge
+- **Strong mid-tier performance** from Llama 3.1 70B (60%) and Claude Sonnet (60%)
+- **Clear performance tiers** emerge across model sizes and training approaches
+- **Specialized knowledge matters** - general coding ability doesn't always translate to framework expertise
+
+### 🔧 Drupal Code Generation Performance
+
+Evaluate models on multi-step, production-ready Drupal module development with comprehensive criteria-based judging.
+
+![Drupal Code Generation Results](assets/results-coding-25-sept.png)
+
+**Key Insights:**
+
+- **GPT-4o dominates** complex code generation with 67% success rate
+- **Significant gap** between top performers and smaller models
+- **Code structure & best practices** prove challenging even for capable models
+- **Multi-turn agentic approach** enables more sophisticated implementations than single-shot generation
+
+> 💡 **Why This Matters**: These results demonstrate that framework-specific evaluation reveals performance patterns invisible in general coding benchmarks. NicheBench helps you choose the right model for your specific technical domain.
+
 ## 🧪 Current Status
 
 - **✅ Drupal Framework Pack**: 2 quiz + 1 code generation task (more coming)
@@ -172,6 +206,7 @@ poetry run nichebench --help
 ```yaml
 # frameworks/drupal/data/quiz/my_quiz.yaml
 id: "drupal_quiz_006"
+context: "You're building a custom module..."
 question: "Which API should you use for custom entities in Drupal 11?"
 choices:
   - "hook_entity_info()"
@@ -179,7 +214,41 @@ choices:
   - "EntityInterface::create()"
   - "Custom entity plugins"
 correct_choice: "B"
-context: "You're building a custom module..."
+```
+
+And here's an example for a code generation task.
+Note that we want to have a full context: everything the model needs to know to complete the task: file-tree, file contents even, acceptance criteria, etc.
+
+```yaml
+# frameworks/drupal/data/code_generation/my_code_task.yaml
+id: "drupal_code_013"
+context: |
+  Project: "Summit"
+  Stack:
+    - Drupal 11.1 (standard install)
+    - PHP 8.2
+  Scenario:
+    - Marketing wants a short-lived promo message on the homepage.
+    - Editors need to toggle the message without deploying code.
+summary: Provide a configurable promo block that only renders when enabled.
+prompt: |
+  Create a `summit_promo` module exposing a `SummitPromoBlock` block plugin.
+  The block should render a promo message pulled from `summit_promo.settings` and only
+  appear when the feature is enabled. Add a ConfigFormBase settings page so editors can
+  toggle the feature and update the message. Ensure the block bubbles cache tags/contexts
+  for the config and respects max-age. Include an automated test that flips the config
+  and asserts the block output.
+judge_checklist:
+  - "Block plugin class annotated with `@Block`, uses dependency injection, and returns a render array with the configured message when enabled."
+  - "Settings form extends ConfigFormBase, writes to `summit_promo.settings`, and prevents saving an empty message while enabled."
+  - "Typed config schema present; default config installed via `config/install` with sensible initial values."
+  - "Block attaches cache metadata (config tag + user permissions) using CacheableMetadata to avoid stale output."
+  - "Functional test (BrowserTestBase or Kernel plus Block plugin build) toggles the config and asserts the block text visibility."
+judge_notes: |
+  • Block plugins live under `Drupal\summit_promo\Plugin\Block` and extend BlockBase.
+  • Inject config with `ConfigFactoryInterface` or `ImmutableConfig`, not `\Drupal::config()`.
+  • Settings form should clear caches after save so block output updates immediately.
+  • Tests may use `drupalPlaceBlock()` or build the block plugin manually; ensure assertions cover both enabled and disabled states.
 ```
 
 ### System Prompts (Python)
