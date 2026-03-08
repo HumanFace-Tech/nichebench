@@ -1,6 +1,5 @@
 """MVP: Run evals for a framework/category/model, print progress, save results."""
 
-from datetime import datetime
 from pathlib import Path
 
 import typer

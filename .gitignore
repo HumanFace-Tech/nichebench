@@ -134,6 +134,10 @@ dmypy.json
 *.swp
 *.swo
 
+# Local AI/dev tooling config
+.devcontainer/
+.opencode/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -147,7 +151,6 @@ logs/
 
 # Local env and sensitive files
 .env.local
-.env.example
 .litellm_cache/
 
 # Configuration files (use sample versions)

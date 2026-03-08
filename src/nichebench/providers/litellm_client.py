@@ -6,8 +6,6 @@ require network calls.
 """
 
 import json
-import os
-import random
 import time
 from typing import Any
 

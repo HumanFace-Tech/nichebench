@@ -46,7 +46,7 @@ fi
 # Configure Poetry to create .venv in project directory
 echo "⚙️  Configuring Poetry..."
 poetry config virtualenvs.in-project true
-poetry config virtualenvs.prefer-active-python true
+poetry config virtualenvs.use-poetry-python false
 
 # Clean install if requested
 if [[ "$CLEAN_INSTALL" == true ]] && [[ -d ".venv" ]]; then

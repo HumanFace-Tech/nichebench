@@ -6,10 +6,9 @@ command logic (`run.py`) stays focused on orchestration.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Iterator
+from typing import Dict
 
 from rich.console import Console
-from rich.live import Live
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -19,7 +18,6 @@ from rich.progress import (
     TextColumn,
     TimeElapsedColumn,
 )
-from rich.table import Table
 
 
 def render_run_header(console: Console, mut_model: str, judge_model: str, profile: str | None) -> None:

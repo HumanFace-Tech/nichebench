@@ -168,7 +168,7 @@ class MUTRunner:
             raise ValueError(f"Multi-turn not supported for category: {category}")
 
         # Execute conversation turns
-        messages = conversation._format_for_llm()
+        messages: Optional[List[Dict[str, str]]] = conversation._format_for_llm()
         turn_count = 0
 
         while messages and turn_count < conversation.max_turns:
@@ -211,13 +211,13 @@ class MUTRunner:
         )
 
         # Get initial user message for logging
-        initial_user_message = None
+        first_user_message: Optional[str] = None
         for turn in conversation.turns:
             if turn.role == "user":
-                initial_user_message = turn.content
+                first_user_message = turn.content
                 break
 
-        return final_output, initial_user_message or "Multi-turn conversation"
+        return final_output, first_user_message or "Multi-turn conversation"
 
 
 class JudgeRunner:

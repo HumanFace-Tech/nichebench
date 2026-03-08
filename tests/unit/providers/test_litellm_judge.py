@@ -1,7 +1,3 @@
-from types import SimpleNamespace
-
-import pytest
-
 from nichebench.providers.litellm_judge import LiteLLMJudge
 
 

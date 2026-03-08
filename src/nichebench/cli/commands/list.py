@@ -5,7 +5,6 @@ from typing import Optional
 
 import typer
 from rich.console import Console
-from rich.table import Table
 
 from nichebench.core.discovery import discover_frameworks
 

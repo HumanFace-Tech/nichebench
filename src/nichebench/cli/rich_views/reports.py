@@ -5,7 +5,7 @@ Rich report rendering for NicheBench runs.
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Tuple
+from typing import List, Mapping, Optional, Tuple
 
 from rich.console import Console
 from rich.panel import Panel

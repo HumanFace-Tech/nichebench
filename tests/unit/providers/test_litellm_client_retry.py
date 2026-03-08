@@ -1,9 +1,6 @@
 """Tests for LiteLLM client retry mechanism."""
 
-import time
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from nichebench.providers.litellm_client import LiteLLMClient
 

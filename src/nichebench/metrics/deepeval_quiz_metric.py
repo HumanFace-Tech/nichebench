@@ -37,7 +37,7 @@ class DeepEvalQuizMetric(BaseMetric):
         self.model = model
         # Which model to use for the judge LLM (if provided). If None we reuse
         # `model` as a sensible default but keep the param explicit.
-        self.judge_model = judge_model or model
+        self.judge_model: str = judge_model or model or "openai/gpt-5"
         self.judge_params = judge_params or {}
         self.include_reason = include_reason
         self.async_mode = async_mode

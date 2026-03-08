@@ -3,11 +3,9 @@
 import tempfile
 from pathlib import Path
 
-import pytest
 import yaml
 
 from nichebench.config.nichebench_config import NicheBenchConfig
-from nichebench.config.settings import Settings
 
 
 class TestNetworkConfiguration:

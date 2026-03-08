@@ -1,6 +1,6 @@
 """Reusable rich table components for nichebench CLI."""
 
-from typing import Dict, Iterable, Mapping, Optional
+from typing import Iterable, Mapping, Optional
 
 from rich import box
 from rich.console import Console
