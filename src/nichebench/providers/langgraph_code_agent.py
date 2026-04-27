@@ -51,26 +51,19 @@ def create_planner_node(llm: ChatLiteLLM, progress_callback: Optional[Callable[[
             # Import the specialized planner prompt
             from nichebench.frameworks.drupal.prompts.CODE_AGENT import (
                 CODE_AGENT_PLANNER_PROMPT,
+                CODE_AGENT_PLANNER_REQUEST_TEMPLATE,
             )
+
+            planner_request_template = CODE_AGENT_PLANNER_REQUEST_TEMPLATE or ""
 
             # Use the actual CODE_AGENT planner prompt with simplified output format instruction
             planning_messages = [
                 SystemMessage(content=CODE_AGENT_PLANNER_PROMPT),
                 HumanMessage(
-                    content=f"""
-Task: {state['original_task']}
-{f"Context: {state['context']}" if state.get('context') else ""}
-
-IMPORTANT: Reply with ONLY the numbered steps from your plan.
-Do NOT include the canonical identifiers section or any other text.
-Just give me the numbered steps like:
-
-1. Create module info file
-2. Create service class
-3. Add routing configuration
-4. Create controller
-5. Add tests
-"""
+                    content=planner_request_template.format(
+                        original_task=state["original_task"],
+                        context_block=(f"Context: {state['context']}" if state.get("context") else ""),
+                    )
                 ),
             ]
 
@@ -214,7 +207,10 @@ def create_solver_node(llm: ChatLiteLLM, progress_callback: Optional[Callable[[s
         # Import the specialized solver prompt
         from nichebench.frameworks.drupal.prompts.CODE_AGENT import (
             CODE_AGENT_SOLVER_PROMPT,
+            CODE_AGENT_SOLVER_REQUEST_TEMPLATE,
         )
+
+        solver_request_template = CODE_AGENT_SOLVER_REQUEST_TEMPLATE or ""
 
         # Build context from previous steps
         context_parts = []
@@ -236,29 +232,14 @@ def create_solver_node(llm: ChatLiteLLM, progress_callback: Optional[Callable[[s
         solver_messages = [
             SystemMessage(content=CODE_AGENT_SOLVER_PROMPT),
             HumanMessage(
-                content=f"""
-ORIGINAL TASK: {state['original_task']}
-{f"CONTEXT: {state['context']}" if state.get('context') else ""}
-
-FULL IMPLEMENTATION PLAN:
-{chr(10).join(f"{i+1}. {step}" for i, step in enumerate(state['plan']))}
-
-CURRENT ASSIGNMENT (FOCUS ON THIS ASSIGNMENT!):
-You are responsible for step {current_step_index + 1}: {current_step}
-
-{context_text}
-
-Execute ONLY step {current_step_index + 1}. Provide your response in this exact format:
-
-EXPLANATION:
-[Explain what you're doing for this step]
-
-CHANGES:
-[List all files you're creating/modifying and their content]
-
-SUMMARY:
-[Brief summary of what was accomplished in this step]
-"""
+                content=solver_request_template.format(
+                    original_task=state["original_task"],
+                    context_block=(f"CONTEXT: {state['context']}" if state.get("context") else ""),
+                    plan_text="\n".join(f"{i + 1}. {step}" for i, step in enumerate(state["plan"])),
+                    step_number=current_step_index + 1,
+                    current_step=current_step,
+                    context_text=context_text,
+                )
             ),
         ]
 

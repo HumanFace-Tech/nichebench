@@ -20,11 +20,22 @@ from rich.progress import (
 )
 
 
-def render_run_header(console: Console, mut_model: str, judge_model: str, profile: str | None) -> None:
+def render_run_header(
+    console: Console,
+    mut_model: str,
+    judge_model: str,
+    profile: str | None,
+    *,
+    runtime_mode: str | None = None,
+) -> None:
     console.print(f"[cyan]Using MUT:[/cyan] {mut_model}")
     console.print(f"[cyan]Using Judge:[/cyan] {judge_model}")
     if profile:
         console.print(f"[cyan]Profile:[/cyan] {profile}")
+    if runtime_mode == "host":
+        console.print("[yellow]Runtime mode:[/yellow] host (compatibility override — cage mode is canonical)")
+    elif runtime_mode:
+        console.print(f"[cyan]Runtime mode:[/cyan] {runtime_mode}")
 
 
 def make_run_progress(console: Console) -> Progress:

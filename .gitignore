@@ -167,6 +167,10 @@ NOTES.md
 
 # Session planning files (local tracking)
 PLAN.yml
+BLOCKERS.md
+
+# Runtime task workspaces (ephemeral, never commit)
+workspaces/
 
 # Docker
 docker-compose.override.yml

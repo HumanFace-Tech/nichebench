@@ -96,6 +96,20 @@ profiles:
 
 **Configuration Precedence**: CLI args > Environment variables > Profile > Defaults
 
+### Runtime cage mode (drupal_runtime)
+
+- Runtime tasks default to `evaluation.runtime_mode: cage` (host mode is compatibility-only).
+- Cage runs use explicit mount islands:
+  - input: `/nichebench/islands/input`
+  - output/trace: `/nichebench/islands/output-trace` (trace subpath: `/nichebench/islands/output-trace/trace`)
+  - optional ops: `/nichebench/islands/ops`
+- Runtime metadata includes `island_topology` so each run records the exact island mappings used.
+- Cage uses DDEV-capable runtime image by default (auto-build supported):
+  - `runtime_container_enable_ddev: true` enables DDEV support check
+  - `runtime_container_ddev_auto_build: true` auto-builds derived image with ddev/docker CLI if needed
+  - `runtime_container_ddev_image` specifies the derived image tag (default: `nichebench/opencode-ddev:1.14.25`)
+  - Docker socket mount (`/var/run/docker.sock`) enables in-agent `ddev` commands for Drupal tasks
+
 ## 📊 Results Showcase
 
 > Latest benchmark results from September 2025

@@ -30,6 +30,9 @@ def all(
     ids: str = typer.Option(
         None, "--ids", help="Comma-separated list of specific test IDs to run (e.g., 'code_1,code_2')"
     ),
+    trials: int = typer.Option(
+        None, "--trials", "-k", help="Number of times to run each test case (default: from config)"
+    ),
 ):
     """Run all test cases for a framework/category with configuration-driven models."""
     # Load environment variables from .env file
@@ -45,13 +48,27 @@ def all(
     network_config = config.get_network_config()
     results_config = config.get_results_config()
 
+    # Resolve effective trials
+    effective_trials = trials if trials is not None else eval_config.get("trials", 1)
+    effective_trials = max(1, effective_trials)
+
     # Extract parallelism setting
     parallelism = eval_config.get("parallelism", 1)
+    if category == "runtime":
+        parallelism = min(parallelism, eval_config.get("runtime_max_workers", parallelism)) or 1
 
     # Create test executor with parallelism support
-    executor = TestExecutor(framework, category, mut_config, judge_config, network_config, parallelism)
+    executor = TestExecutor(
+        framework, category, mut_config, judge_config, network_config, parallelism, cli_model_override=model
+    )
 
-    render_run_header(console, executor.mut_model_str, executor.judge_model_str, profile)
+    render_run_header(
+        console,
+        executor.mut_model_str,
+        executor.judge_model_str,
+        profile,
+        runtime_mode=eval_config.get("runtime_mode") if category == "runtime" else None,
+    )
 
     # Discover and validate framework/category
     root = Path(__file__).resolve().parents[4] / "src" / "nichebench" / "frameworks"
@@ -92,7 +109,7 @@ def all(
     details_path, summary_path, outdir = executor.setup_results_directory(results_config)
 
     # Execute tests with elegant parallel support
-    with LiveTestRunner(console, framework, category, len(testcases), parallelism) as runner:
+    with LiveTestRunner(console, framework, category, len(testcases) * effective_trials, parallelism) as runner:
         # Define callbacks for incremental saving and summary updates
         def save_result(result):
             executor.save_incremental_result(result, details_path)
@@ -101,7 +118,9 @@ def all(
             executor.update_summary(results, summary_path, profile, eval_config)
 
         # Execute all tests (sequentially or in parallel based on config)
-        executor.execute_tests_parallel(testcases, runner, save_result, update_summary_callback)
+        executor.execute_tests_parallel(
+            testcases, runner, save_result, update_summary_callback, trials=effective_trials
+        )
 
         # Show completion summary
         runner.show_summary()

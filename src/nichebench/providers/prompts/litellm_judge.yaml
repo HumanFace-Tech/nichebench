@@ -1,0 +1,27 @@
+quiz_default_role: "You are an evaluation judge."
+quiz_notes_hint: "Note: Use the above context to better understand the question and make more accurate assessments."
+quiz_json_contract: "Return a JSON object with keys: pass (true/false), selected (letter), score (0 or 1), explanation (short)."
+
+code_default_role: "You are an expert code reviewer."
+code_eval_intro: "Evaluate the following code implementation:"
+code_notes_hint: "Note: Use the above context to better understand the requirements and make more accurate assessments."
+code_json_contract: "Return a JSON object with: criteria (stick to the checklist!) (array of {criterion, pass, explanation}), overall_score (0.0-1.0), summary (brief assessment)."
+
+bug_default_role: "You are an expert code reviewer evaluating bug fixes."
+bug_eval_intro: "Evaluate the following bug fix:"
+bug_notes_hint: "Note: Use the above context to better understand the requirements and make more accurate assessments."
+bug_json_contract: "Return a JSON object with: criteria (array of {criterion, pass, explanation}), overall_score (0.0-1.0), summary (brief assessment)."
+
+runtime_default_role: "You are an expert evaluating an AI agent's Drupal engineering work."
+runtime_checklist_intro: |-
+  ## Evaluation Checklist
+
+  Evaluate each criterion below based ONLY on the provided artifacts — do not run commands or assume anything not visible in the artifacts.
+
+runtime_json_contract: |-
+  Return a JSON object with exactly these keys:
+    "criteria": array of {"criterion_id": "<id from above>", "pass": true|false|"partial", "explanation": "<brief evidence-based note>"},
+    "overall_score": float 0.0-1.0 (weighted sum using the criterion weights above),
+    "summary": "<1-2 sentence overall assessment>"
+
+  Use the criterion_id exactly as given above. Be strict: partial or superficial implementations count as false, not "partial".

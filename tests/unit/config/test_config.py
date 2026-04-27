@@ -157,3 +157,21 @@ def test_list_profiles_empty_and_populated(tmp_path):
     assert "reasoning" in profiles
     assert "anthropic" in profiles
     assert len(profiles) == 3
+
+
+def test_runtime_defaults_are_present(tmp_path):
+    cfg_path = tmp_path / "defaults.yml"
+    write_yaml(cfg_path, {})
+
+    cfg = NicheBenchConfig(config_path=cfg_path)
+    eval_conf = cfg.get_evaluation_config()
+
+    assert eval_conf["runtime_mode"] == "cage"
+    assert eval_conf["runtime_container_image"]  # must be non-empty and pinned
+    assert "latest" not in eval_conf["runtime_container_image"]  # never floating
+    assert eval_conf["runtime_container_user"] == "1000:1000"
+    assert eval_conf["runtime_container_read_only"] is False
+    assert eval_conf["runtime_timeout_minutes"] == 60
+    assert eval_conf["runtime_max_workers"] == 1
+    assert eval_conf["runtime_artifact_retention"] == "standard"
+    assert eval_conf["runtime_keep_workspaces"] is False

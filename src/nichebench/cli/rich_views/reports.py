@@ -74,13 +74,19 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
         elif key == "avg_score":
             # Always try to show average score
             avg_score = summary.get("avg_score", 0.0)
+            avg_score_std = summary.get("avg_score_std", 0.0)
+            trials = summary.get("trials", 1)
             score_percent = int(avg_score * 100)
+            std_percent = int(avg_score_std * 100)
+            score_str = f"{score_percent}%"
+            if trials > 1 and avg_score_std > 0:
+                score_str = f"{score_percent}% ±{std_percent}%"
             if score_percent > 66:
-                table_row.append(f"[bold green]{score_percent}%[/bold green]")
+                table_row.append(f"[bold green]{score_str}[/bold green]")
             elif score_percent >= 33:
-                table_row.append(f"[bold yellow]{score_percent}%[/bold yellow]")
+                table_row.append(f"[bold yellow]{score_str}[/bold yellow]")
             else:
-                table_row.append(f"[bold red]{score_percent}%[/bold red]")
+                table_row.append(f"[bold red]{score_str}[/bold red]")
         elif key in summary:
             val = summary[key]
             table_row.append(str(val))
@@ -148,11 +154,134 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
             # Create different table layouts based on category
             if cat == "quiz":
                 _render_quiz_details_table(console, header_text, rows)
+            elif cat == "runtime":
+                _render_runtime_details_table(console, header_text, rows)
             elif cat in ("code_generation", "bug_fixing", "code_agent"):
                 _render_code_details_table(console, header_text, rows, cat)
             else:
                 # Fallback for unknown categories
                 _render_generic_details_table(console, header_text, rows)
+
+
+def _render_runtime_details_table(console: Console, header_text: str, rows: List[Mapping]):
+    """Render details table for runtime category."""
+    import math
+    from collections import defaultdict
+
+    # Detect multi-trial: group rows by test_id
+    id_groups: dict = defaultdict(list)
+    for row in rows:
+        id_groups[row.get("test_id", "?")].append(row)
+
+    multi_trial = any(len(v) > 1 for v in id_groups.values())
+
+    dtable = Table(show_lines=True, header_style="bold blue", padding=(0, 1))
+    dtable.add_column("🧪 Test ID", style="yellow", width=15)
+    dtable.add_column("🛡️ Gate", style="bold", justify="center", width=8)
+    dtable.add_column("📈 Deterministic", style="bold", justify="center", width=12)
+    dtable.add_column("🤖 Judge", style="bold", justify="center", width=8)
+    if multi_trial:
+        dtable.add_column("📊 Final (mean±std)", style="bold", justify="center", width=16)
+        dtable.add_column("🔁 Trials", style="dim", justify="center", width=8)
+    else:
+        dtable.add_column("📊 Final", style="bold", justify="center", width=8)
+    dtable.add_column("✅ Checks", style="cyan", justify="left", width=25)
+    dtable.add_column("🤖 Profile", style="magenta", width=15)
+    dtable.add_column("🔗 Provenance", style="dim", width=30, overflow="fold")
+    dtable.add_column("💭 Summary", style="dim", width=40, overflow="fold")
+
+    for test_id, test_rows in id_groups.items():
+        # Use the last trial's row for metadata (checks, provenance, summary)
+        representative = test_rows[-1]
+        judge_output = representative.get("judge_output", {})
+
+        hybrid_scores = []
+        det_scores = []
+        judge_scores_list = []
+        for r in test_rows:
+            jo = r.get("judge_output", {})
+            hs = jo.get("hybrid_score", 0.0)
+            ds = jo.get("deterministic_score", 0.0)
+            js = jo.get("judge_score", None)
+            hybrid_scores.append(float(hs) if hs is not None else 0.0)
+            det_scores.append(float(ds) if ds is not None else 0.0)
+            if js is not None:
+                judge_scores_list.append(float(js))
+
+        k = len(hybrid_scores)
+        hybrid_mean = sum(hybrid_scores) / k
+        det_mean = sum(det_scores) / k
+        judge_mean = sum(judge_scores_list) / len(judge_scores_list) if judge_scores_list else None
+
+        if k > 1:
+            variance = sum((s - hybrid_mean) ** 2 for s in hybrid_scores) / (k - 1)
+            hybrid_std = math.sqrt(variance)
+        else:
+            hybrid_std = 0.0
+
+        deterministic_gate_passed = judge_output.get("deterministic_gate_passed", representative.get("pass", False))
+        checks = judge_output.get("checks", [])
+
+        gate_text = "[bold green]PASS[/bold green]" if deterministic_gate_passed else "[bold red]FAIL[/bold red]"
+        deterministic_text = f"{int(det_mean * 100)}%"
+        judge_text = "N/A" if judge_mean is None else f"{int(judge_mean * 100)}%"
+
+        if multi_trial and k > 1:
+            final_text = f"{int(hybrid_mean * 100)}% ±{int(hybrid_std * 100)}%"
+            trials_text = str(k)
+        else:
+            final_text = f"{int(hybrid_mean * 100)}%"
+
+        check_parts = []
+        for c in checks:
+            status = "✅" if c.get("passed") else "❌"
+            critical = "!" if c.get("critical") else ""
+            check_parts.append(f"{status}{critical} {c.get('name')}")
+        checks_text = "\n".join(check_parts) if check_parts else "No checks"
+
+        base_branch = representative.get("base_branch", "?")
+        resolved_sha = str(representative.get("resolved_sha", "?"))[:8]
+        provenance = f"branch: {base_branch}\nsha: {resolved_sha}"
+        profile = representative.get("effective_profile", "unknown")
+        summary = representative.get("summary", "No summary")
+
+        if multi_trial:
+            dtable.add_row(
+                str(test_id),
+                gate_text,
+                deterministic_text,
+                judge_text,
+                final_text,
+                trials_text,
+                checks_text,
+                profile,
+                provenance,
+                summary,
+            )
+        else:
+            dtable.add_row(
+                str(test_id),
+                gate_text,
+                deterministic_text,
+                judge_text,
+                final_text,
+                checks_text,
+                profile,
+                provenance,
+                summary,
+            )
+
+    console.print("\n")
+    console.print(
+        Panel(
+            dtable,
+            title=header_text,
+            style="cyan",
+            padding=(1, 0, 0, 0),
+            expand=True,
+            width=160,
+        )
+    )
 
 
 def _render_quiz_details_table(console: Console, header_text: str, rows: List[Mapping]):

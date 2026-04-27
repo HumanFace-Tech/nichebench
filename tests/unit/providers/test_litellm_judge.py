@@ -1,3 +1,5 @@
+import pytest
+
 from nichebench.providers.litellm_judge import LiteLLMJudge
 
 
@@ -145,3 +147,161 @@ def test_score_quiz_prompt_structure():
     assert "Gold (correct answer): B" in prompt
     assert "Model answer: The capital is Paris" in prompt
     assert "Return a JSON object" in prompt
+
+
+# ---- score_runtime tests ----
+
+
+def test_score_runtime_valid_response_weighted():
+    """Happy path: judge returns well-formed JSON with criterion_id keys; score is weighted."""
+    checklist = [
+        {"id": "entity_defined", "question": "Is the entity defined?", "weight": 0.6},
+        {"id": "routing_yml", "question": "Is routing.yml present?", "weight": 0.4},
+    ]
+    json_resp = (
+        '{"criteria": ['
+        '{"criterion_id": "entity_defined", "pass": true, "explanation": "found"},'
+        '{"criterion_id": "routing_yml", "pass": false, "explanation": "missing"}'
+        '], "overall_score": 0.6, "summary": "Partial work"}'
+    )
+    client = MockClient(json_resp)
+    judge = LiteLLMJudge(client=client)
+
+    result = judge.score_runtime(
+        task_description="Build an entity",
+        artifact_summary="diff content here",
+        checklist_items=checklist,
+        model="openai/gpt-4o",
+    )
+
+    assert result["overall_score"] == 0.6
+    assert len(result["criteria"]) == 2
+    assert "summary" in result
+    assert "raw" in result
+
+
+def test_score_runtime_recomputes_weighted_score_when_missing():
+    """If judge omits overall_score, it is computed from weighted criteria."""
+    checklist = [
+        {"id": "a", "question": "Q1?", "weight": 0.7},
+        {"id": "b", "question": "Q2?", "weight": 0.3},
+    ]
+    # Judge omits overall_score
+    json_resp = (
+        '{"criteria": ['
+        '{"criterion_id": "a", "pass": true, "explanation": "ok"},'
+        '{"criterion_id": "b", "pass": "partial", "explanation": "half done"}'
+        '], "summary": "ok"}'
+    )
+    client = MockClient(json_resp)
+    judge = LiteLLMJudge(client=client)
+
+    result = judge.score_runtime(
+        task_description="Task",
+        artifact_summary="diff",
+        checklist_items=checklist,
+    )
+    # a=true → 0.7, b=partial → 0.3*0.5=0.15; total_weight=1.0 → 0.85
+    assert abs(result["overall_score"] - 0.85) < 0.001
+
+
+def test_score_runtime_invalid_json_returns_zero():
+    """Invalid JSON from judge → overall_score is 0.0, no randomness."""
+    checklist = [{"id": "x", "question": "Q?", "weight": 1.0}]
+    client = MockClient("not json at all")
+    judge = LiteLLMJudge(client=client)
+
+    result = judge.score_runtime(
+        task_description="Task",
+        artifact_summary="diff",
+        checklist_items=checklist,
+    )
+    assert result["overall_score"] == 0.0
+    assert result["criteria"][0]["pass"] is False
+    assert "raw" in result
+
+
+def test_score_runtime_no_checklist_returns_one():
+    """Empty checklist → deterministic 1.0, no judge call needed."""
+    client = MockClient("{}")
+    judge = LiteLLMJudge(client=client)
+
+    result = judge.score_runtime(
+        task_description="Task",
+        artifact_summary="diff",
+        checklist_items=[],
+    )
+    assert result["overall_score"] == 1.0
+    assert result["criteria"] == []
+
+
+def test_score_runtime_positional_fallback():
+    """When criterion_ids are unrecognised, positional fallback is used."""
+    checklist = [
+        {"id": "real_id_1", "question": "Q1?", "weight": 0.5},
+        {"id": "real_id_2", "question": "Q2?", "weight": 0.5},
+    ]
+    # Judge returns wrong/missing criterion_ids — triggers positional fallback
+    json_resp = (
+        '{"criteria": ['
+        '{"criterion_id": "wrong_id_a", "pass": true, "explanation": "ok"},'
+        '{"criterion_id": "wrong_id_b", "pass": false, "explanation": "missing"}'
+        '], "summary": "partial"}'
+    )
+    client = MockClient(json_resp)
+    judge = LiteLLMJudge(client=client)
+
+    result = judge.score_runtime(
+        task_description="Task",
+        artifact_summary="diff",
+        checklist_items=checklist,
+    )
+    # Positional: index 0 → weight 0.5 (true), index 1 → weight 0.5 (false) → 0.5
+    assert abs(result["overall_score"] - 0.5) < 0.001
+
+
+def test_score_runtime_prompt_includes_all_sections():
+    """Prompt must include task description, artifacts, and checklist."""
+
+    class CapturingClient:
+        def __init__(self):
+            self.last_prompt = ""
+
+        def generate(self, prompt, model, model_params=None):
+            self.last_prompt = prompt
+            return {"output": '{"criteria": [], "overall_score": 1.0, "summary": "ok"}'}
+
+    client = CapturingClient()
+    judge = LiteLLMJudge(client=client)
+
+    judge.score_runtime(
+        task_description="Build a wizard",
+        artifact_summary="=== GIT DIFF ===\n+++ some diff",
+        checklist_items=[{"id": "check_1", "question": "Is wizard built?", "weight": 1.0}],
+        system_prompt="You are strict.",
+    )
+
+    prompt = client.last_prompt
+    assert "Build a wizard" in prompt
+    assert "GIT DIFF" in prompt
+    assert "check_1" in prompt
+    assert "Is wizard built?" in prompt
+    assert "You are strict." in prompt
+
+
+def test_score_runtime_api_error_raises():
+    """Client API errors (model not found, network) must propagate as RuntimeError.
+
+    This lets the executor's outer except-block leave judge_score=None so the
+    run falls back to deterministic-only scoring instead of scoring the MUT as 0.
+    """
+    checklist = [{"id": "x", "question": "Q?", "weight": 1.0}]
+    client = MockClient("[Error: LiteLLM error after 3 attempts: model_not_found]")
+    judge = LiteLLMJudge(client=client)
+
+    with pytest.raises(RuntimeError, match=r"\[Error:"):
+        judge.score_runtime(
+            task_description="Task",
+            artifact_summary="diff",
+            checklist_items=checklist,
+        )

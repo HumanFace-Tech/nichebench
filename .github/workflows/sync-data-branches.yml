@@ -1,0 +1,27 @@
+name: Sync Data Branches
+
+on:
+  workflow_dispatch:
+    inputs:
+      data_repo:
+        description: "Path to local data repo checkout on runner"
+        required: true
+        default: "../nichebench-data-drupal"
+  schedule:
+    - cron: "30 3 * * 1"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout nichebench
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run sync script
+        run: |
+          python scripts/sync_data_branches.py "${{ github.event.inputs.data_repo || '../nichebench-data-drupal' }}"
