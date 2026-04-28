@@ -1401,9 +1401,12 @@ class TestExecutor:
         for path in (home_host, xdg_config_host, xdg_data_host, xdg_state_host, xdg_cache_host):
             path.mkdir(parents=True, exist_ok=True)
 
-        output_island_host = Path(
-            getattr(workspace, "run_artifacts_path", workspace_host_path / "results" / "run")
-        ).resolve()
+        _raw_rap = getattr(workspace, "run_artifacts_path", None)
+        output_island_host = (
+            Path(_raw_rap).resolve()
+            if isinstance(_raw_rap, (str, Path))
+            else (workspace_host_path / "results" / "run").resolve()
+        )
         output_island_host.mkdir(parents=True, exist_ok=True)
         output_trace_island_container = "/nichebench/islands/output-trace"
         trace_host_path = output_island_host / "trace"
