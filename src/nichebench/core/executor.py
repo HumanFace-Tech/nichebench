@@ -25,6 +25,11 @@ from nichebench.config.settings import settings
 from nichebench.core.datamodel import TestCaseSpec
 from nichebench.core.profiles import resolve_profile
 from nichebench.core.prompt_loader import load_prompt_text
+from nichebench.core.runtime_diagnostics import (
+    RuntimeTrace,
+    classify_runtime_failure,
+    first_failed_stage,
+)
 from nichebench.core.scoring import CheckResult, RuntimeScorer
 from nichebench.core.validation import ValidationError, validate_runtime_testcase
 from nichebench.core.workspace import Workspace
@@ -1650,6 +1655,7 @@ class TestExecutor:
         config = {
             "$schema": "https://opencode.ai/config.schema.json",
             "model": f"{opencode_provider}/{opencode_model_id}",
+            "small_model": f"{opencode_provider}/{opencode_model_id}",
             "mode": {
                 "build": {
                     "prompt": prompt,
@@ -2005,7 +2011,14 @@ class TestExecutor:
                 metadata_path = outdir / "metadata.json"
                 metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-        # In minimal mode, persist metadata only.
+        # Save runtime_trace.json in minimal/standard/full for diagnostics baseline
+        if "runtime_trace.json" in artifacts:
+            runtime_trace = artifacts["runtime_trace.json"]
+            if runtime_trace:
+                runtime_trace_path = outdir / "runtime_trace.json"
+                runtime_trace_path.write_text(json.dumps(runtime_trace, indent=2), encoding="utf-8")
+
+        # In minimal mode, persist baseline diagnostics only.
         if retention == "minimal":
             return
 
@@ -2179,6 +2192,9 @@ class TestExecutor:
     def execute_runtime_test(self, test_case: TestCaseSpec, trial: int = 0) -> TestResult:
         """Execute a runtime testcase and capture runtime artifacts."""
         result = TestResult(self.framework, self.category, test_case, self.mut_model_str, self.judge_model_str)
+        trace = RuntimeTrace(test_id=test_case.id)
+        current_stage = "config_resolution"
+        trace.stage_start(current_stage, {"runtime_mode": self.evaluation_config.get("runtime_mode", "cage")})
         runtime_config = self.evaluation_config
         runtime_mode = str(runtime_config.get("runtime_mode", "cage"))
         effective_runtime_mode = "cage" if runtime_mode in ("cage", "container") else runtime_mode
@@ -2215,6 +2231,10 @@ class TestExecutor:
 
         profile = resolve_profile("offline_cli")
         try:
+            trace.stage_end("config_resolution", "passed")
+
+            current_stage = "workspace_setup"
+            trace.stage_start(current_stage, {"use_runtime_workspace": use_runtime_workspace})
             if use_runtime_workspace:
                 assert isinstance(source, dict)
                 assert isinstance(environment, dict)
@@ -2233,12 +2253,19 @@ class TestExecutor:
                     timeout=runtime_timeout_seconds,
                 )
                 workspace_dir = workspace.path
+            trace.stage_end("workspace_setup", "passed", {"workspace_path": str(workspace_dir)})
+
+            current_stage = "environment_bootstrap"
+            trace.stage_start(current_stage)
             assert workspace_dir is not None  # always set by this point
             self._run_runtime_preflight_host(runtime_config, runtime_mode)
             self._run_runtime_preflight_workspace(workspace_dir, effective_runtime_mode)
             self._inject_task_markdown(workspace_dir, test_case)
             checks_config = self._load_runtime_checks(test_case)
+            trace.stage_end("environment_bootstrap", "passed")
 
+            current_stage = "agent_execution"
+            trace.stage_start(current_stage)
             if effective_runtime_mode == "cage":
                 (
                     mut_output,
@@ -2292,6 +2319,14 @@ class TestExecutor:
                         "first_pass_run_log": first_pass_run_log,
                         "attempted": True,
                     }
+            trace.stage_end(
+                "agent_execution",
+                "passed",
+                {
+                    "review_nudge_attempted": bool(review_pass_info),
+                    "mut_output_excerpt": (mut_output or "")[:300],
+                },
+            )
 
             result.user_input = user_input
             result.mut_output = mut_output
@@ -2328,6 +2363,9 @@ class TestExecutor:
             if trajectory is not None:
                 result.runtime_artifacts["trajectory.json"] = trajectory
 
+            current_stage = "deterministic_checks"
+            trace.stage_start(current_stage)
+
             scorer = RuntimeScorer(
                 workspace_path=workspace_dir,
                 command_timeout_seconds=runtime_timeout_seconds,
@@ -2351,7 +2389,17 @@ class TestExecutor:
                 for c in check_results
             ]
             result.runtime_artifacts["checks.json"] = {"deterministic": checks_payload}
+            trace.stage_end(
+                "deterministic_checks",
+                "passed",
+                {
+                    "total_checks": len(check_results),
+                    "failed_checks": len([c for c in check_results if not c.passed]),
+                },
+            )
 
+            current_stage = "judge_scoring"
+            trace.stage_start(current_stage)
             judge_score: Optional[float] = None
             runtime_judge_output: Dict[str, Any] = {}
             llm_judge_config = test_case.raw.get("llm_judge", {})
@@ -2394,12 +2442,59 @@ class TestExecutor:
                 "runtime_judge": runtime_judge_output,
             }
             result.passed = hybrid_score.passed
+
+            trace.stage_end(
+                "judge_scoring",
+                "passed",
+                {
+                    "deterministic_score": hybrid_score.deterministic_score,
+                    "judge_score": hybrid_score.judge_score,
+                    "hybrid_score": hybrid_score.final_score,
+                },
+            )
+
+            current_stage = "artifact_finalization"
+            trace.stage_start(current_stage)
+            failed_critical_check = any(c.is_critical and not c.passed for c in check_results)
+            failure_info = classify_runtime_failure(
+                error=result.error,
+                failed_critical_check=failed_critical_check,
+                failed_stage="none",
+            )
+            metadata = result.runtime_artifacts.get("metadata.json") or {}
+            metadata = dict(metadata)
+            metadata.update(failure_info.to_dict())
+            result.runtime_artifacts["metadata.json"] = metadata
+            result.judge_output["failure_class"] = metadata.get("failure_class")
+            result.judge_output["failure_code"] = metadata.get("failure_code")
+            result.judge_output["failure_fingerprint"] = metadata.get("failure_fingerprint")
+            trace.stage_end("artifact_finalization", "passed")
         except Exception as exc:
+            trace.stage_end(current_stage, "failed", {"error": str(exc)})
             result.error = str(exc)
             result.passed = False
             result.mut_output = f"[Error: {exc}]"
             result.judge_output = {"error": str(exc)}
+            failure_info = classify_runtime_failure(
+                error=str(exc),
+                failed_critical_check=False,
+                failed_stage=current_stage,
+            )
+            if not result.runtime_artifacts:
+                result.runtime_artifacts = {}
+            meta = result.runtime_artifacts.get("metadata.json") or {}
+            meta = dict(meta)
+            meta.update(failure_info.to_dict())
+            result.runtime_artifacts["metadata.json"] = meta
+            result.judge_output.update(
+                {
+                    "failure_class": meta.get("failure_class"),
+                    "failure_code": meta.get("failure_code"),
+                    "failure_fingerprint": meta.get("failure_fingerprint"),
+                }
+            )
         finally:
+            trace.stage_start("cleanup")
             if use_runtime_workspace and hasattr(workspace, "cleanup"):
                 # Always release DDEV project resources (containers/networks/volumes)
                 # so repeated runs do not leak Docker networks.
@@ -2410,6 +2505,19 @@ class TestExecutor:
             else:
                 assert workspace_dir is not None
                 shutil.rmtree(workspace_dir, ignore_errors=True)
+            trace.stage_end("cleanup", "passed")
+
+            runtime_trace_payload = trace.finalize()
+            if not result.runtime_artifacts:
+                result.runtime_artifacts = {}
+            result.runtime_artifacts["runtime_trace.json"] = runtime_trace_payload
+
+            first_failed = first_failed_stage(runtime_trace_payload)
+            existing_meta = result.runtime_artifacts.get("metadata.json")
+            if isinstance(existing_meta, dict):
+                existing_meta["first_failed_stage"] = first_failed
+            if isinstance(result.judge_output, dict):
+                result.judge_output["first_failed_stage"] = first_failed
 
         return result
 

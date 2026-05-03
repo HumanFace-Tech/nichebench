@@ -327,6 +327,7 @@ class TestSaveRuntimeArtifacts:
             "final.diff": "",
             "checks.json": {},
             "trajectory.json": trajectory,
+            "runtime_trace.json": {"test_id": "drupal_runtime_001", "stages": []},
         }
         executor, result = self._make_result(artifacts, "standard")
         executor.results_outdir = tmp_path
@@ -337,6 +338,7 @@ class TestSaveRuntimeArtifacts:
         assert out.exists()
         saved = json.loads(out.read_text())
         assert saved["instance_id"] == "t"
+        assert (tmp_path / "runtime" / "drupal_runtime_001" / "runtime_trace.json").exists()
 
     def test_trajectory_saved_in_full_mode(self, tmp_path):
         trajectory = {"instance_id": "t", "model": "m", "messages": [], "stats": {}}
@@ -381,6 +383,7 @@ class TestSaveRuntimeArtifacts:
             "checks.json": {"deterministic": []},
             "final.diff": "--- a/foo\n+++ b/foo",
             "trajectory.json": {"instance_id": "t", "model": "m", "messages": [], "stats": {}},
+            "runtime_trace.json": {"test_id": "drupal_runtime_001", "stages": []},
         }
         executor, result = self._make_result(artifacts, "minimal")
         executor.results_outdir = tmp_path
@@ -389,6 +392,7 @@ class TestSaveRuntimeArtifacts:
 
         outdir = tmp_path / "runtime" / "drupal_runtime_001"
         assert (outdir / "metadata.json").exists()
+        assert (outdir / "runtime_trace.json").exists()
         assert not (outdir / "run.log").exists()
         assert not (outdir / "checks.json").exists()
         assert not (outdir / "final.diff").exists()

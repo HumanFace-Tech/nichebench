@@ -49,8 +49,8 @@ The exact island mapping used for each run is persisted in runtime `metadata.jso
 
 Runtime runs emit a normalized bundle under the results run directory:
 
-- `minimal`: `metadata.json`, `checks.json`, `final.diff`
-- `standard`: `minimal` + `git-log.txt`, `run.log`, plus `phpcs.json` / `phpstan.json` when static checks are present
+- `minimal`: `metadata.json`, `runtime_trace.json`
+- `standard`: `minimal` + `checks.json`, `final.diff`, `git-log.txt`, `run.log`, plus `phpcs.json` / `phpstan.json` when static checks are present
 - `full`: `standard` + `command_log.json`, optional browser payloads, and other raw artifact payloads
 
 Optional browser artifacts can be attached when enabled by profile/config.
