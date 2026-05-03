@@ -175,3 +175,4 @@ def test_runtime_defaults_are_present(tmp_path):
     assert eval_conf["runtime_max_workers"] == 1
     assert eval_conf["runtime_artifact_retention"] == "standard"
     assert eval_conf["runtime_keep_workspaces"] is False
+    assert eval_conf["runtime_enable_diagnostics"] is True

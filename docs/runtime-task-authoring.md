@@ -33,6 +33,7 @@ Runtime tasks are defined in YAML files with `task_type: runtime`.
 - `runtime_max_workers`: max concurrent runtime workers
 - `runtime_artifact_retention`: `minimal`, `standard` (default), or `full`
 - `runtime_keep_workspaces`: retain runtime workspaces after each run (legacy `keep_workspaces` still works)
+- `runtime_enable_diagnostics`: emit `runtime_trace.json` and failure taxonomy metadata (default `true`)
 
 Container mode adds hardening defaults (`--cap-drop=ALL`, `no-new-privileges`, non-root user, and optional tmpfs mounts when `runtime_container_read_only` is enabled). This reduces risk, but the Docker socket bind remains highly privileged and should be treated as such.
 

@@ -42,8 +42,11 @@ class RuntimeTrace:
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.ended_at: Optional[str] = None
         self.stages: List[Dict[str, Any]] = []
+        self._open_stage: Optional[str] = None
 
     def stage_start(self, stage: str, evidence: Optional[Dict[str, Any]] = None) -> None:
+        if self._open_stage is not None:
+            raise ValueError(f"cannot start stage {stage!r} — stage {self._open_stage!r} is already open")
         self.stages.append(
             {
                 "stage": stage,
@@ -53,8 +56,11 @@ class RuntimeTrace:
                 "evidence": evidence or {},
             }
         )
+        self._open_stage = stage
 
     def stage_end(self, stage: str, status: str, evidence: Optional[Dict[str, Any]] = None) -> None:
+        if self._open_stage != stage:
+            raise ValueError(f"stage {stage!r} is not currently open")
         for item in reversed(self.stages):
             if item.get("stage") == stage and item.get("status") == "in_progress":
                 item["status"] = status
@@ -63,19 +69,14 @@ class RuntimeTrace:
                     merged = dict(item.get("evidence") or {})
                     merged.update(evidence)
                     item["evidence"] = merged
+                self._open_stage = None
                 return
 
-        self.stages.append(
-            {
-                "stage": stage,
-                "status": status,
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "ended_at": datetime.now(timezone.utc).isoformat(),
-                "evidence": evidence or {},
-            }
-        )
+        self._open_stage = None
 
     def finalize(self) -> Dict[str, Any]:
+        if self._open_stage is not None:
+            raise ValueError(f"finalize() called with unclosed stage {self._open_stage!r}")
         self.ended_at = datetime.now(timezone.utc).isoformat()
         return {
             "test_id": self.test_id,

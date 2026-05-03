@@ -7,6 +7,7 @@ and clear separation of concerns.
 import importlib.util
 import json
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -2008,6 +2009,7 @@ class TestExecutor:
                     metadata = dict(metadata)  # Make a copy to avoid mutating input
                     metadata["trial"] = result.trial
                     metadata["trials_total"] = result.trials_total
+                metadata = self._redact_artifact_payload(metadata)
                 metadata_path = outdir / "metadata.json"
                 metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
@@ -2015,6 +2017,7 @@ class TestExecutor:
         if "runtime_trace.json" in artifacts:
             runtime_trace = artifacts["runtime_trace.json"]
             if runtime_trace:
+                runtime_trace = self._redact_artifact_payload(runtime_trace)
                 runtime_trace_path = outdir / "runtime_trace.json"
                 runtime_trace_path.write_text(json.dumps(runtime_trace, indent=2), encoding="utf-8")
 
@@ -2027,12 +2030,13 @@ class TestExecutor:
             run_log = artifacts["run.log"]
             if run_log:
                 run_log_path = outdir / "run.log"
-                run_log_path.write_text(str(run_log), encoding="utf-8")
+                run_log_path.write_text(self._redact_artifact_payload(str(run_log)), encoding="utf-8")
 
         # Save checks if present and retention allows
         if "checks.json" in artifacts and retention in ("standard", "full"):
             checks = artifacts["checks.json"]
             if checks:
+                checks = self._redact_artifact_payload(checks)
                 checks_path = outdir / "checks.json"
                 checks_path.write_text(json.dumps(checks, indent=2), encoding="utf-8")
 
@@ -2041,7 +2045,53 @@ class TestExecutor:
             final_diff = artifacts["final.diff"]
             if final_diff:
                 final_diff_path = outdir / "final.diff"
-                final_diff_path.write_text(str(final_diff), encoding="utf-8")
+                final_diff_path.write_text(self._redact_artifact_payload(str(final_diff)), encoding="utf-8")
+
+    @staticmethod
+    def _redact_artifact_payload(payload: Any) -> Any:
+        """Redact secret-like values in runtime artifacts before persisting."""
+        sensitive_keys = {
+            "api_key",
+            "apikey",
+            "authorization",
+            "password",
+            "secret",
+            "token",
+            "access_token",
+            "openai_api_key",
+            "groq_api_key",
+            "anthropic_api_key",
+        }
+
+        def _redact_text(text: str) -> str:
+            redacted = text
+            patterns = [
+                r"(OPENAI_API_KEY\s*=\s*)[^\s\n]+",
+                r"(GROQ_API_KEY\s*=\s*)[^\s\n]+",
+                r"(ANTHROPIC_API_KEY\s*=\s*)[^\s\n]+",
+                r"(Authorization:\s*Bearer\s+)[^\s\n]+",
+                r"(api[_-]?key\s*[:=]\s*)[^\s\n,]+",
+                r"(token\s*[:=]\s*)[^\s\n,]+",
+                r"(password\s*[:=]\s*)[^\s\n,]+",
+            ]
+            for pattern in patterns:
+                redacted = re.sub(pattern, r"\1[REDACTED]", redacted, flags=re.IGNORECASE)
+            return redacted
+
+        if isinstance(payload, str):
+            return _redact_text(payload)
+        if isinstance(payload, dict):
+            output: Dict[str, Any] = {}
+            for key, value in payload.items():
+                key_str = str(key)
+                if key_str.lower() in sensitive_keys:
+                    output[key_str] = "[REDACTED]"
+                else:
+                    output[key_str] = TestExecutor._redact_artifact_payload(value)
+            return output
+        if isinstance(payload, list):
+            return [TestExecutor._redact_artifact_payload(item) for item in payload]
+        return payload
 
     @staticmethod
     def _extract_trajectory_tool_names(trajectory: Dict[str, Any]) -> set[str]:
@@ -2192,6 +2242,7 @@ class TestExecutor:
     def execute_runtime_test(self, test_case: TestCaseSpec, trial: int = 0) -> TestResult:
         """Execute a runtime testcase and capture runtime artifacts."""
         result = TestResult(self.framework, self.category, test_case, self.mut_model_str, self.judge_model_str)
+        diagnostics_enabled = bool(self.evaluation_config.get("runtime_enable_diagnostics", True))
         trace = RuntimeTrace(test_id=test_case.id)
         current_stage = "config_resolution"
         trace.stage_start(current_stage, {"runtime_mode": self.evaluation_config.get("runtime_mode", "cage")})
@@ -2463,11 +2514,13 @@ class TestExecutor:
             )
             metadata = result.runtime_artifacts.get("metadata.json") or {}
             metadata = dict(metadata)
-            metadata.update(failure_info.to_dict())
+            if diagnostics_enabled:
+                metadata.update(failure_info.to_dict())
             result.runtime_artifacts["metadata.json"] = metadata
-            result.judge_output["failure_class"] = metadata.get("failure_class")
-            result.judge_output["failure_code"] = metadata.get("failure_code")
-            result.judge_output["failure_fingerprint"] = metadata.get("failure_fingerprint")
+            if diagnostics_enabled:
+                result.judge_output["failure_class"] = metadata.get("failure_class")
+                result.judge_output["failure_code"] = metadata.get("failure_code")
+                result.judge_output["failure_fingerprint"] = metadata.get("failure_fingerprint")
             trace.stage_end("artifact_finalization", "passed")
         except Exception as exc:
             trace.stage_end(current_stage, "failed", {"error": str(exc)})
@@ -2484,15 +2537,17 @@ class TestExecutor:
                 result.runtime_artifacts = {}
             meta = result.runtime_artifacts.get("metadata.json") or {}
             meta = dict(meta)
-            meta.update(failure_info.to_dict())
+            if diagnostics_enabled:
+                meta.update(failure_info.to_dict())
             result.runtime_artifacts["metadata.json"] = meta
-            result.judge_output.update(
-                {
-                    "failure_class": meta.get("failure_class"),
-                    "failure_code": meta.get("failure_code"),
-                    "failure_fingerprint": meta.get("failure_fingerprint"),
-                }
-            )
+            if diagnostics_enabled:
+                result.judge_output.update(
+                    {
+                        "failure_class": meta.get("failure_class"),
+                        "failure_code": meta.get("failure_code"),
+                        "failure_fingerprint": meta.get("failure_fingerprint"),
+                    }
+                )
         finally:
             trace.stage_start("cleanup")
             if use_runtime_workspace and hasattr(workspace, "cleanup"):
@@ -2510,13 +2565,14 @@ class TestExecutor:
             runtime_trace_payload = trace.finalize()
             if not result.runtime_artifacts:
                 result.runtime_artifacts = {}
-            result.runtime_artifacts["runtime_trace.json"] = runtime_trace_payload
+            if diagnostics_enabled:
+                result.runtime_artifacts["runtime_trace.json"] = runtime_trace_payload
 
             first_failed = first_failed_stage(runtime_trace_payload)
             existing_meta = result.runtime_artifacts.get("metadata.json")
-            if isinstance(existing_meta, dict):
+            if diagnostics_enabled and isinstance(existing_meta, dict):
                 existing_meta["first_failed_stage"] = first_failed
-            if isinstance(result.judge_output, dict):
+            if diagnostics_enabled and isinstance(result.judge_output, dict):
                 result.judge_output["first_failed_stage"] = first_failed
 
         return result

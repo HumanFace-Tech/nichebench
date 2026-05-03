@@ -376,6 +376,32 @@ class TestSaveRuntimeArtifacts:
         assert (outdir / "final.diff").read_text(encoding="utf-8") == artifacts["final.diff"]
         assert (outdir / "trajectory.json").exists()
 
+    def test_artifact_redaction_removes_secret_values(self, tmp_path):
+        artifacts = {
+            "metadata.json": {"openai_api_key": "sk-123", "nested": {"token": "abc"}},
+            "run.log": "OPENAI_API_KEY=sk-secret\nAuthorization: Bearer abc123",
+            "checks.json": {"deterministic": [{"details": {"api_key": "value"}}]},
+            "final.diff": "+ token=abcd",
+            "runtime_trace.json": {"stages": [{"evidence": {"password": "x"}}]},
+        }
+        executor, result = self._make_result(artifacts, "standard")
+        executor.results_outdir = tmp_path
+
+        executor._save_runtime_artifacts(result)
+
+        outdir = tmp_path / "runtime" / "drupal_runtime_001"
+        metadata = json.loads((outdir / "metadata.json").read_text(encoding="utf-8"))
+        run_log = (outdir / "run.log").read_text(encoding="utf-8")
+        checks = json.loads((outdir / "checks.json").read_text(encoding="utf-8"))
+        runtime_trace = json.loads((outdir / "runtime_trace.json").read_text(encoding="utf-8"))
+
+        assert metadata["openai_api_key"] == "[REDACTED]"
+        assert metadata["nested"]["token"] == "[REDACTED]"
+        assert "sk-secret" not in run_log
+        assert "Bearer abc123" not in run_log
+        assert checks["deterministic"][0]["details"]["api_key"] == "[REDACTED]"
+        assert runtime_trace["stages"][0]["evidence"]["password"] == "[REDACTED]"
+
     def test_minimal_mode_saves_metadata_only(self, tmp_path):
         artifacts = {
             "metadata.json": {"test_id": "drupal_runtime_001"},

@@ -64,6 +64,7 @@ class NicheBenchConfig:
                 "runtime_tool_allowlist_enforce": False,
                 "runtime_tool_retry_attempts": 3,
                 "runtime_judge_samples": 1,
+                "runtime_enable_diagnostics": True,
             },
             "network": {"timeout": 600, "retry_attempts": 5, "retry_delay": 3.0},
             "results": {"auto_report": True, "save_format": "jsonl", "timestamp_format": "%Y%m%d_%H%M%S"},
