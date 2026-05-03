@@ -37,6 +37,28 @@ from nichebench.providers.mut_prompt_composer import MUTPromptComposer
 from nichebench.utils.git import find_git_root, resolve_branch_to_sha
 from nichebench.utils.io import ensure_results_dir, save_json, save_jsonl
 
+# Providers that OpenCode recognises natively.  Any other provider (e.g.
+# "llamacpp") must be remapped to "openai" with options.baseURL when an
+# api_base is configured.
+_OPENCODE_NATIVE_PROVIDERS: frozenset[str] = frozenset(
+    {
+        "openai",
+        "anthropic",
+        "groq",
+        "google",
+        "vertex",
+        "bedrock",
+        "azure",
+        "deepseek",
+        "xai",
+        "togetherai",
+        "mistral",
+        "cloudflare",
+        "ollama",
+        "cerebras",
+    }
+)
+
 
 class TestResult:
     """Encapsulates a single test result."""
@@ -1386,6 +1408,21 @@ class TestExecutor:
             runtime_config,
             cli_model_override=self._cli_model_override,
         )
+
+        # Resolve the api_base early — needed for provider remapping below.
+        cage_api_base_raw = runtime_config.get("runtime_opencode_api_base")
+        cage_api_base: Optional[str] = None
+        if cage_api_base_raw:
+            cage_api_base = str(cage_api_base_raw).rstrip("/")
+            if not cage_api_base.endswith("/v1"):
+                cage_api_base += "/v1"
+
+        # When a custom api_base is configured and the computed provider is not
+        # natively known to OpenCode, remap to the built-in "openai" provider so
+        # OpenCode's openai-compatible path is used with options.baseURL.
+        if cage_api_base and opencode_provider not in _OPENCODE_NATIVE_PROVIDERS:
+            opencode_provider = "openai"
+
         opencode_model_binding = f"{opencode_provider}/{opencode_model_id}"
 
         # Get provider API keys from host environment
@@ -1395,6 +1432,7 @@ class TestExecutor:
             workspace_host_path=workspace_host_path,
             opencode_provider=opencode_provider,
             opencode_model_id=opencode_model_id,
+            api_base=cage_api_base,
         )
 
         # Run-scoped OpenCode state roots prevent any inheritance from host user
@@ -1464,14 +1502,10 @@ class TestExecutor:
 
         # When using a custom OpenAI-compatible endpoint (e.g. llama-swap), pass
         # the base URL so OpenCode inside the cage can reach it. OpenCode reads
-        # OPENAI_BASE_URL (not OPENAI_API_BASE). The /v1 suffix is appended here
-        # so OpenCode hits the correct /v1/chat/completions path.
-        runtime_opencode_api_base = runtime_config.get("runtime_opencode_api_base")
-        if runtime_opencode_api_base:
-            normalized = runtime_opencode_api_base.rstrip("/")
-            if not normalized.endswith("/v1"):
-                normalized += "/v1"
-            env["OPENAI_BASE_URL"] = normalized
+        # OPENAI_BASE_URL (not OPENAI_API_BASE). cage_api_base is already
+        # normalised (with /v1 suffix) by the provider-remapping block above.
+        if cage_api_base:
+            env["OPENAI_BASE_URL"] = cage_api_base
             env["OPENAI_API_KEY"] = "dummy"
 
         # Resolve effective cage image (handles DDEV capability checks and auto-build)
@@ -1594,6 +1628,7 @@ class TestExecutor:
         workspace_host_path: Path,
         opencode_provider: str,
         opencode_model_id: str,
+        api_base: Optional[str] = None,
     ) -> Path:
         """Write cage-run opencode.json in workspace root."""
         prompt = load_prompt_text(
@@ -1601,6 +1636,17 @@ class TestExecutor:
             "cage_opencode_prompt",
             default="",
         )
+        provider_block: Dict[str, Any] = {
+            "models": {
+                opencode_model_id: {},
+            }
+        }
+        if api_base:
+            # Route requests to the custom OpenAI-compatible endpoint.
+            # opencode_provider is already remapped to "openai" at the call site
+            # when the original provider is not natively known to OpenCode.
+            provider_block["options"] = {"baseURL": api_base}
+            provider_block["api_key"] = "dummy"
         config = {
             "$schema": "https://opencode.ai/config.schema.json",
             "model": f"{opencode_provider}/{opencode_model_id}",
@@ -1610,11 +1656,7 @@ class TestExecutor:
                 }
             },
             "provider": {
-                opencode_provider: {
-                    "models": {
-                        opencode_model_id: {},
-                    }
-                }
+                opencode_provider: provider_block,
             },
         }
         out_path = workspace_host_path / "opencode.json"
