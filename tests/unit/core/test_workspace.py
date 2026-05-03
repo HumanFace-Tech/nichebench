@@ -90,15 +90,16 @@ def test_cleanup_fallback_runs_stop_when_delete_returns_nonzero(tmp_path: Path):
     with patch("nichebench.core.workspace.subprocess.run", side_effect=mock_run):
         workspace.cleanup(timeout=10)
 
-    assert "ddev delete --omit-snapshot -y" in called_commands
-    assert "ddev stop -y" in called_commands
+    assert any(c.startswith("ddev delete --omit-snapshot -y") for c in called_commands)
+    assert any(c.startswith("ddev stop --remove-data -y") for c in called_commands)
     assert "ddev poweroff" not in called_commands
     assert any(
-        entry.get("command") == "ddev delete --omit-snapshot -y" and entry.get("returncode") == 1
+        str(entry.get("command", "")).startswith("ddev delete --omit-snapshot -y") and entry.get("returncode") == 1
         for entry in workspace.command_log
     )
     assert any(
-        entry.get("command") == "ddev stop -y" and entry.get("returncode") == 0 for entry in workspace.command_log
+        str(entry.get("command", "")).startswith("ddev stop --remove-data -y") and entry.get("returncode") == 0
+        for entry in workspace.command_log
     )
     assert not workspace.path.exists()
 
@@ -117,7 +118,8 @@ def test_cleanup_does_not_run_fallback_when_delete_succeeds(tmp_path: Path):
     with patch("nichebench.core.workspace.subprocess.run", side_effect=mock_run):
         workspace.cleanup(timeout=10)
 
-    assert called_commands == ["ddev delete --omit-snapshot -y"]
+    assert len(called_commands) == 1
+    assert called_commands[0].startswith("ddev delete --omit-snapshot -y")
     assert not workspace.path.exists()
 
 
@@ -169,5 +171,5 @@ def test_cleanup_can_preserve_workspace_files_but_release_ddev_resources(
     with patch("nichebench.core.workspace.subprocess.run", side_effect=mock_run):
         workspace.cleanup(timeout=10, remove_workspace=False)
 
-    assert "ddev delete --omit-snapshot -y" in called_commands
+    assert any(c.startswith("ddev delete --omit-snapshot -y") for c in called_commands)
     assert workspace.path.exists()

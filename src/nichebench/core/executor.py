@@ -884,7 +884,9 @@ class TestExecutor:
             True if required tooling exists, False otherwise
         """
         try:
-            # Use shell probe to ensure binaries and ddev drush command parity.
+            # Check for required binaries only. The || true / grep pattern was
+            # a false positive: the || true masked missing-binary failures and
+            # the grep always passed when the output file didn't exist.
             cmd = [
                 "docker",
                 "run",
@@ -893,11 +895,7 @@ class TestExecutor:
                 "sh",
                 image,
                 "-c",
-                (
-                    "command -v ddev && command -v docker && command -v git && "
-                    "ddev drush --help >/tmp/ddev-drush.out 2>&1 || true; "
-                    "! grep -qi 'unknown command \"drush\"' /tmp/ddev-drush.out"
-                ),
+                "command -v ddev && command -v docker && command -v git",
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             return result.returncode == 0
@@ -993,7 +991,10 @@ class TestExecutor:
         if self.parallelism == 1:
             # Sequential execution - use the original flow for compatibility
             sequential_results: List[TestResult] = []
+            harness_failed = False
             for trial_num in range(trials):
+                if harness_failed:
+                    break
                 for test_case in test_cases:
                     if runner:
                         runner.start_test(test_case.id)
@@ -1011,6 +1012,13 @@ class TestExecutor:
 
                     if runner:
                         runner.finish_test(test_case.id, result.passed, result.error)
+
+                    # A harness-level error (exception, not a model failure) means
+                    # subsequent trials will hit the same wall.  Bail out early to
+                    # avoid wasting compute/time on a broken environment.
+                    if result.error:
+                        harness_failed = True
+                        break
 
             return sequential_results
 
@@ -1454,6 +1462,18 @@ class TestExecutor:
         env["XDG_STATE_HOME"] = f"{container_state_root}/xdg-state"
         env["XDG_CACHE_HOME"] = f"{container_state_root}/xdg-cache"
 
+        # When using a custom OpenAI-compatible endpoint (e.g. llama-swap), pass
+        # the base URL so OpenCode inside the cage can reach it. OpenCode reads
+        # OPENAI_BASE_URL (not OPENAI_API_BASE). The /v1 suffix is appended here
+        # so OpenCode hits the correct /v1/chat/completions path.
+        runtime_opencode_api_base = runtime_config.get("runtime_opencode_api_base")
+        if runtime_opencode_api_base:
+            normalized = runtime_opencode_api_base.rstrip("/")
+            if not normalized.endswith("/v1"):
+                normalized += "/v1"
+            env["OPENAI_BASE_URL"] = normalized
+            env["OPENAI_API_KEY"] = "dummy"
+
         # Resolve effective cage image (handles DDEV capability checks and auto-build)
         image = self._resolve_effective_cage_image(runtime_config)
         runtime_user = str(runtime_config.get("runtime_container_user", "1000:1000"))
@@ -1647,7 +1667,6 @@ class TestExecutor:
 
         provider = mut_provider
         model_id = mut_model
-
         return provider, model_id
 
     @staticmethod
@@ -2145,27 +2164,34 @@ class TestExecutor:
             if branch_name:
                 test_case.resolved_sha = resolve_branch_to_sha(branch_name, repo_root)
             workspace = Workspace(base_path=Path("workspaces"), task_id=test_case.id)
-            workspace.create(source_path=repo_root, sha=test_case.resolved_sha)
-            setup_mode = str(environment.get("setup_mode", "config_import"))
-            post_setup_commands = environment.get("post_setup_commands")
-            workspace.ddev_start(
-                setup_mode=setup_mode,
-                timeout=runtime_timeout_seconds,
-                post_setup_commands=post_setup_commands if isinstance(post_setup_commands, list) else None,
-            )
-            # Enforce 1:1 developer command contract before MUT starts.
-            workspace._run_logged_command(["ddev", "status"], timeout=runtime_timeout_seconds)
-            workspace._run_logged_command(
-                ["ddev", "drush", "status", "--fields=bootstrap,drupal-version"],
-                timeout=runtime_timeout_seconds,
-            )
-            workspace_dir = workspace.path
+            # NOTE: workspace.create() and ddev_start() are intentionally inside
+            # the outer try block (below) so that the finally clause runs
+            # workspace.cleanup() even when setup fails mid-way.
         else:
             workspace_dir = Path(tempfile.mkdtemp(prefix=f"nichebench-runtime-{test_case.id}-"))
             workspace = _RuntimeWorkspace(workspace_dir)
 
         profile = resolve_profile("offline_cli")
         try:
+            if use_runtime_workspace:
+                assert isinstance(source, dict)
+                assert isinstance(environment, dict)
+                setup_mode = str(environment.get("setup_mode", "config_import"))
+                post_setup_commands = environment.get("post_setup_commands")
+                workspace.create(source_path=repo_root, sha=test_case.resolved_sha)
+                workspace.ddev_start(
+                    setup_mode=setup_mode,
+                    timeout=runtime_timeout_seconds,
+                    post_setup_commands=post_setup_commands if isinstance(post_setup_commands, list) else None,
+                )
+                # Enforce 1:1 developer command contract before MUT starts.
+                workspace._run_logged_command(["ddev", "status"], timeout=runtime_timeout_seconds)
+                workspace._run_logged_command(
+                    ["ddev", "drush", "status", "--fields=bootstrap,drupal-version"],
+                    timeout=runtime_timeout_seconds,
+                )
+                workspace_dir = workspace.path
+            assert workspace_dir is not None  # always set by this point
             self._run_runtime_preflight_host(runtime_config, runtime_mode)
             self._run_runtime_preflight_workspace(workspace_dir, effective_runtime_mode)
             self._inject_task_markdown(workspace_dir, test_case)
@@ -2340,6 +2366,7 @@ class TestExecutor:
                     remove_workspace=not keep_workspace,
                 )
             else:
+                assert workspace_dir is not None
                 shutil.rmtree(workspace_dir, ignore_errors=True)
 
         return result

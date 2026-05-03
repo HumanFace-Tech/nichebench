@@ -1015,7 +1015,7 @@ class TestCageModeDDEVImageFlow:
         # Verify probe command format
         assert mock_run.called
         probe_cmd = mock_run.call_args.args[0]
-        # Command should include ddev/docker/git + ddev drush support probe.
+        # Command should check for required binaries only (no || true false-positive).
         assert probe_cmd[0] == "docker"
         assert probe_cmd[1] == "run"
         assert "--rm" in probe_cmd
@@ -1027,8 +1027,8 @@ class TestCageModeDDEVImageFlow:
         assert "command -v ddev" in probe_cmd[cmd_idx + 1]
         assert "command -v docker" in probe_cmd[cmd_idx + 1]
         assert "command -v git" in probe_cmd[cmd_idx + 1]
-        assert "ddev drush --help" in probe_cmd[cmd_idx + 1]
-        assert "drush" in probe_cmd[cmd_idx + 1]
+        # ddev drush probe removed: the || true pattern was a false positive
+        assert "|| true" not in probe_cmd[cmd_idx + 1]
 
     @patch("nichebench.core.executor.subprocess.run")
     def test_cage_runtime_command_uses_explicit_opencode_entrypoint(self, mock_run, tmp_path):

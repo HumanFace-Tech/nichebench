@@ -102,10 +102,30 @@ class LiteLLMClient:
 
                 # Add API base for custom endpoints (Ollama, local servers, etc.)
                 if api_base:
-                    completion_args["api_base"] = api_base
+                    # Ensure /v1 suffix so OpenAI-compatible endpoints hit the right path.
+                    # LiteLLM's OpenAI provider appends /chat/completions without /v1/,
+                    # so we pre-pend it here. Also strip any provider prefix from the
+                    # bare model name since custom endpoints only accept bare model IDs
+                    # (e.g. llama-swap rejects "openai/qwen3.6-35b-a3b").
+                    normalized_base = api_base.rstrip("/")
+                    if not normalized_base.endswith("/v1"):
+                        normalized_base += "/v1"
+                    completion_args["api_base"] = normalized_base
+                    # Provide a dummy api_key so litellm's OpenAI handler doesn't
+                    # reject the request for missing API key. Custom endpoints like
+                    # llama-swap/Ollama ignore this field.
+                    if not completion_args.get("api_key"):
+                        completion_args["api_key"] = "dummy"
                     # Temporarily set global api_base for this call only
                     if LITELLM_MODULE:
-                        setattr(LITELLM_MODULE, "api_base", api_base)
+                        setattr(LITELLM_MODULE, "api_base", normalized_base)
+                    model_for_api = model
+                    if "/" in model:
+                        # Strip provider prefix so bare model name reaches the endpoint
+                        model_for_api = model.split("/", 1)[1]
+                    # Always use OpenAI-compatible client for custom api_base endpoints
+                    completion_args["custom_llm_provider"] = "openai"
+                    completion_args["model"] = model_for_api
 
                 response = LITELLM_MODULE.completion(**completion_args)
 
@@ -127,9 +147,9 @@ class LiteLLMClient:
                     if hasattr(response, "choices") and getattr(response, "choices", None):
                         first_choice = response.choices[0]  # type: ignore
                         if hasattr(first_choice, "message") and getattr(first_choice, "message", None):
-                            content = getattr(first_choice.message, "content", None)  # type: ignore
-                            if content:
-                                return {"model": model, "output": strip_think_tags(content)}
+                            raw_content = getattr(first_choice.message, "content", None)
+                            # raw_content is None when max_tokens was too small for model to emit any token
+                            return {"model": model, "output": strip_think_tags(raw_content) if raw_content else ""}
                         # Alternative structure handling
                         content = str(first_choice)
                         return {"model": model, "output": strip_think_tags(content)}

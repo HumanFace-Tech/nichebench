@@ -78,19 +78,30 @@ class Workspace:
 
     def cleanup(self, timeout: Optional[int] = None, remove_workspace: bool = True):
         """Clean up DDEV runtime resources and optionally remove workspace files."""
-        delete_result = self._run_cleanup_command(["ddev", "delete", "--omit-snapshot", "-y"], timeout=timeout)
+        # Pass the project name explicitly so the command works regardless of
+        # CWD validity.  DDEV accepts `ddev delete <projectname>` from any
+        # directory, which avoids failures when the workspace path has issues.
+        delete_result = self._run_cleanup_command(
+            ["ddev", "delete", "--omit-snapshot", "-y", self.ddev_project_name],
+            timeout=timeout,
+        )
         if delete_result.returncode != 0:
             self.command_log.append(
                 {
-                    "command": "ddev delete --omit-snapshot -y",
+                    "command": f"ddev delete --omit-snapshot -y {self.ddev_project_name}",
                     "warning": "Primary DDEV teardown failed; running fallback cleanup",
                     "returncode": delete_result.returncode,
                     "stdout": delete_result.stdout,
                     "stderr": delete_result.stderr,
                 }
             )
-            for cmd in (["ddev", "stop", "-y"],):
-                self._run_cleanup_command(cmd, timeout=timeout)
+            # Fallback: stop with --remove-data fully deletes containers,
+            # volumes, and the project registration.  Plain `ddev stop`
+            # only pauses the project and leaves it in DDEV's registry.
+            self._run_cleanup_command(
+                ["ddev", "stop", "--remove-data", "-y", self.ddev_project_name],
+                timeout=timeout,
+            )
 
         if remove_workspace and self.path.exists():
             try:
