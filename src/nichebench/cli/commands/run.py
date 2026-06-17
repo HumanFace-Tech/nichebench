@@ -1,6 +1,7 @@
 """MVP: Run evals for a framework/category/model, print progress, save results."""
 
 from pathlib import Path
+from typing import Optional
 
 import typer
 from dotenv import load_dotenv
@@ -8,7 +9,7 @@ from rich.console import Console
 
 from nichebench.config.nichebench_config import get_config
 from nichebench.core.discovery import discover_frameworks
-from nichebench.core.executor import TestExecutor
+from nichebench.execution.orchestrator import TestExecutor
 
 from ..rich_views.run_views import (
     LiveTestRunner,
@@ -33,6 +34,11 @@ def all(
     trials: int = typer.Option(
         None, "--trials", "-k", help="Number of times to run each test case (default: from config)"
     ),
+    runtime_hints: Optional[bool] = typer.Option(
+        None,
+        "--runtime-hints/--no-runtime-hints",
+        help="Enable or disable optional runtime task hints for diagnostic runs.",
+    ),
 ):
     """Run all test cases for a framework/category with configuration-driven models."""
     # Load environment variables from .env file
@@ -44,7 +50,9 @@ def all(
     # Get model configurations with CLI overrides
     mut_config = config.get_mut_config(model_override=model, profile=profile)
     judge_config = config.get_judge_config(judge_override=judge, profile=profile)
-    eval_config = config.get_evaluation_config()
+    eval_config = config.get_evaluation_config(profile=profile)
+    if runtime_hints is not None:
+        eval_config["runtime_hints_enabled"] = runtime_hints
     network_config = config.get_network_config()
     results_config = config.get_results_config()
 
@@ -61,6 +69,7 @@ def all(
     executor = TestExecutor(
         framework, category, mut_config, judge_config, network_config, parallelism, cli_model_override=model
     )
+    executor.evaluation_config.update(eval_config)
 
     render_run_header(
         console,
@@ -98,7 +107,7 @@ def all(
             console.print(f"[red]No test cases found with IDs: {', '.join(requested_ids)}[/red]")
             console.print(f"[yellow]Available IDs:[/yellow] {', '.join([tc.id for tc in task.testcases])}")
             raise typer.Exit(1)
-        elif len(testcases) < len(requested_ids):
+        if len(testcases) < len(requested_ids):
             found_ids = [tc.id for tc in testcases]
             missing_ids = [id for id in requested_ids if id not in found_ids]
             console.print(f"[yellow]Warning: Some IDs not found: {', '.join(missing_ids)}[/yellow]")

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from nichebench.core.runtime_diagnostics import (
+from nichebench.execution.diagnostics.trace import (
     RUNTIME_STAGES,
     RuntimeTrace,
     classify_runtime_failure,
@@ -174,8 +174,29 @@ def test_all_failure_classes_produce_valid_codes(failure_class):
     assert len(failure.failure_code) > 0
 
 
+def test_local_execution_timeout_classifies_as_agent_execution_timeout():
+    """Container OpenCode command timeout in agent_execution stage → agent.execution_timeout."""
+    failure = classify_runtime_failure(
+        error="Container OpenCode command timed out after 300s",
+        failed_critical_check=False,
+        failed_stage="agent_execution",
+    )
+    assert failure.failure_class == "agent_execution"
+    assert failure.failure_code == "agent.execution_timeout"
+
+
+def test_true_network_timeout_classifies_as_network_connectivity():
+    """A connection-level timeout outside agent_execution → network_connectivity."""
+    failure = classify_runtime_failure(
+        error="connection timed out",
+        failed_critical_check=False,
+        failed_stage="environment_bootstrap",
+    )
+    assert failure.failure_class == "network_connectivity"
+    assert failure.failure_code == "network.request_failed"
+
+
 def test_critical_check_takes_precedence_over_error_text():
-    """failed_critical_check=True always maps to deterministic_checks."""
     failure = classify_runtime_failure(
         error="connection error",
         failed_critical_check=True,
@@ -219,7 +240,7 @@ def test_runtime_failure_to_dict_contains_all_fields():
 
 def test_no_hardcoded_entity_ids_in_runtime_diagnostics():
     """runtime_diagnostics.py must not contain hardcoded nids, uids, or entity IDs."""
-    import nichebench.core.runtime_diagnostics as rd
+    import nichebench.execution.diagnostics.trace as rd
 
     source = Path(rd.__file__).read_text()
     assert not _contains_drupal_ids(source)
@@ -227,7 +248,7 @@ def test_no_hardcoded_entity_ids_in_runtime_diagnostics():
 
 def test_no_provider_specific_model_names_in_source():
     """runtime_diagnostics.py must not reference provider-specific model names."""
-    import nichebench.core.runtime_diagnostics as rd
+    import nichebench.execution.diagnostics.trace as rd
 
     source = Path(rd.__file__).read_text()
     forbidden = ["gpt-", "claude-", "qwen", "llama"]

@@ -1,11 +1,26 @@
-from nichebench.core.datamodel import TestCaseSpec
+"""Runtime scoring validation.
 
+Owner: scoring package.
+Boundary: validates runtime task manifests (``TestCaseSpec``) and container
+image references before any runtime resources are allocated.
 
-class ValidationError(Exception):
-    """Exception raised for validation errors in task manifests."""
+Why here instead of ``core/validation.py``
+-----------------------------------------
+Manifest validation must run early during ``TestCaseSpec`` construction,
+before any runtime resources are allocated.  Placing it in ``core/validation.py``
+would load it for every task type including static tasks, creating an
+undesirable cross-module import cycle.
 
-    pass
+Public API
+----------
+ValidationError        — exception raised by the validators below.
+validate_container_image_pin(image: str) -> None
+    Raises ``ValidationError`` for floating/unpinned tags.
+validate_runtime_testcase(tc: TestCaseSpec) -> None
+    Validates a runtime test case manifest against the required schema.
+"""
 
+from typing import Any
 
 # Floating tags that are NOT considered pinned references.
 _FLOATING_TAGS = frozenset(
@@ -23,6 +38,10 @@ _FLOATING_TAGS = frozenset(
         "release",
     }
 )
+
+
+class ValidationError(Exception):
+    """Exception raised for validation errors in task manifests."""
 
 
 def validate_container_image_pin(image: str) -> None:
@@ -63,20 +82,23 @@ def validate_container_image_pin(image: str) -> None:
         )
 
 
-def validate_runtime_testcase(tc: TestCaseSpec):
+def validate_runtime_testcase(tc: Any) -> None:
     """Validate a runtime test case against the required schema."""
+    # Lazy import to avoid circular dependency at module load time.
+    from nichebench.core.datamodel import TestCaseSpec
+
+    if not isinstance(tc, TestCaseSpec):
+        return
     if tc.type != "runtime":
         return
 
-    # 1.1 Add task_type: runtime schema support with required fields
+    # Required fields
     required_fields = ["source", "environment", "agent", "checks", "scoring", "deliverables"]
     missing = [f for f in required_fields if not tc.raw.get(f)]
-
-    # 1.2 Implement manifest validation errors for missing/invalid runtime fields
     if missing:
         raise ValidationError(f"Runtime task {tc.id} missing required fields: {', '.join(missing)}")
 
-    # 1.3 Add setup mode validation for config_import and db_snapshot
+    # Environment must be a dict
     env = tc.raw.get("environment", {})
     if not isinstance(env, dict):
         raise ValidationError(f"Runtime task {tc.id} 'environment' field must be a dictionary.")
@@ -87,25 +109,24 @@ def validate_runtime_testcase(tc: TestCaseSpec):
             f"Runtime task {tc.id} has invalid setup_mode: {setup_mode}. " f"Must be 'config_import' or 'db_snapshot'."
         )
 
-    # Validate source fields for branch-based baselines (Task 2.1)
+    # Source must be a dict with base_branch or task_branch
     source = tc.raw.get("source", {})
     if not isinstance(source, dict):
         raise ValidationError(f"Runtime task {tc.id} 'source' field must be a dictionary.")
-
     if not (source.get("base_branch") or source.get("task_branch")):
         raise ValidationError(f"Runtime task {tc.id} 'source' missing required field: base_branch/task_branch")
 
+    # Browser artifacts must be a dict when provided
     browser_artifacts = tc.raw.get("browser_artifacts")
     if browser_artifacts is not None and not isinstance(browser_artifacts, dict):
         raise ValidationError(f"Runtime task {tc.id} 'browser_artifacts' field must be a dictionary when provided.")
 
-    # Validate checks (Task 4.1)
+    # Checks validation
     checks = tc.raw.get("checks", [])
     if isinstance(checks, list):
         for i, check in enumerate(checks):
             if not isinstance(check, dict) or "type" not in check:
                 raise ValidationError(f"Runtime task {tc.id} check #{i} is missing 'type'.")
-
             check_type = check.get("type")
             valid_check_types = ["fail_to_pass", "pass_to_pass", "required_command", "path_policy"]
             if check_type not in valid_check_types:

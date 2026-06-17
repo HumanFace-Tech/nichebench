@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timezone
 from unittest.mock import patch
 
-from nichebench.core.executor import TestExecutor
+from nichebench.execution.orchestrator import TestExecutor
 
 # ---------------------------------------------------------------------------
 # Minimal executor factory (avoids loading prompts / config files)
@@ -18,20 +18,19 @@ def _make_executor() -> TestExecutor:
     network_cfg = {"timeout": 30, "retry_attempts": 1, "retry_delay": 1}
 
     with (
-        patch("nichebench.core.executor.get_config") as mock_config,
+        patch("nichebench.execution.orchestrator.get_config") as mock_config,
         patch.object(TestExecutor, "_load_system_prompt", return_value=None),
         patch.object(TestExecutor, "_load_judge_system_prompt", return_value=None),
     ):
         mock_config.return_value.get_evaluation_config.return_value = {}
         mock_config.return_value.get_model_string.side_effect = lambda cfg: (f"{cfg['provider']}/{cfg['model']}")
-        executor = TestExecutor(
+        return TestExecutor(
             framework="drupal_runtime",
             category="runtime",
             mut_config=mut_cfg,
             judge_config=judge_cfg,
             network_config=network_cfg,
         )
-    return executor
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +44,7 @@ class TestOpencodeSessionsDir:
         msg_dir = base / "message"
         msg_dir.mkdir(parents=True)
 
-        with patch("nichebench.core.executor.Path.home", return_value=tmp_path):
+        with patch("nichebench.execution.orchestrator.Path.home", return_value=tmp_path):
             result = TestExecutor._opencode_sessions_dir()
 
         assert result == msg_dir
@@ -55,13 +54,13 @@ class TestOpencodeSessionsDir:
         sess_dir = base / "session"
         sess_dir.mkdir(parents=True)
 
-        with patch("nichebench.core.executor.Path.home", return_value=tmp_path):
+        with patch("nichebench.execution.orchestrator.Path.home", return_value=tmp_path):
             result = TestExecutor._opencode_sessions_dir()
 
         assert result == sess_dir
 
     def test_returns_none_when_neither_exists(self, tmp_path):
-        with patch("nichebench.core.executor.Path.home", return_value=tmp_path):
+        with patch("nichebench.execution.orchestrator.Path.home", return_value=tmp_path):
             result = TestExecutor._opencode_sessions_dir()
 
         assert result is None
@@ -96,7 +95,7 @@ class TestOpencodeSessionsDir:
         global_msg = tmp_path / "home" / ".local" / "share" / "opencode" / "storage" / "message"
         global_msg.mkdir(parents=True)
 
-        with patch("nichebench.core.executor.Path.home", return_value=tmp_path / "home"):
+        with patch("nichebench.execution.orchestrator.Path.home", return_value=tmp_path / "home"):
             result = TestExecutor._opencode_sessions_dir(xdg_data_home=xdg)
 
         assert result is None  # run-scoped dir has no storage → None, global ignored
@@ -310,7 +309,7 @@ class TestBuildTrajectory:
 class TestSaveRuntimeArtifacts:
     def _make_result(self, artifacts, retention="standard"):
         from nichebench.core.datamodel import TestCaseSpec
-        from nichebench.core.executor import TestResult
+        from nichebench.execution.orchestrator import TestResult
 
         tc = TestCaseSpec(id="drupal_runtime_001", type="runtime", raw={})
         executor = _make_executor()
@@ -378,11 +377,22 @@ class TestSaveRuntimeArtifacts:
 
     def test_artifact_redaction_removes_secret_values(self, tmp_path):
         artifacts = {
-            "metadata.json": {"openai_api_key": "sk-123", "nested": {"token": "abc"}},
+            "metadata.json": {
+                "openai_api_key": "sk-123",
+                "openrouter_api_key": "or-secret",
+                "xai_api_key": "xai-secret",
+                "nested": {"token": "abc"},
+            },
             "run.log": "OPENAI_API_KEY=sk-secret\nAuthorization: Bearer abc123",
             "checks.json": {"deterministic": [{"details": {"api_key": "value"}}]},
             "final.diff": "+ token=abcd",
             "runtime_trace.json": {"stages": [{"evidence": {"password": "x"}}]},
+            "trajectory.json": {
+                "messages": [
+                    {"content": '{"apiKey":"sk-json","Authorization":"Bearer json-token"}'},
+                    {"content": "token: plain-token"},
+                ]
+            },
         }
         executor, result = self._make_result(artifacts, "standard")
         executor.results_outdir = tmp_path
@@ -394,13 +404,20 @@ class TestSaveRuntimeArtifacts:
         run_log = (outdir / "run.log").read_text(encoding="utf-8")
         checks = json.loads((outdir / "checks.json").read_text(encoding="utf-8"))
         runtime_trace = json.loads((outdir / "runtime_trace.json").read_text(encoding="utf-8"))
+        trajectory = json.loads((outdir / "trajectory.json").read_text(encoding="utf-8"))
 
         assert metadata["openai_api_key"] == "[REDACTED]"
+        assert metadata["openrouter_api_key"] == "[REDACTED]"
+        assert metadata["xai_api_key"] == "[REDACTED]"
         assert metadata["nested"]["token"] == "[REDACTED]"
         assert "sk-secret" not in run_log
         assert "Bearer abc123" not in run_log
         assert checks["deterministic"][0]["details"]["api_key"] == "[REDACTED]"
         assert runtime_trace["stages"][0]["evidence"]["password"] == "[REDACTED]"
+        trajectory_text = json.dumps(trajectory)
+        assert "sk-json" not in trajectory_text
+        assert "json-token" not in trajectory_text
+        assert "plain-token" not in trajectory_text
 
     def test_minimal_mode_saves_metadata_only(self, tmp_path):
         artifacts = {
@@ -511,7 +528,7 @@ class TestSaveRuntimeArtifacts:
 class TestToDict:
     def _make_result_with_artifacts(self, artifacts):
         from nichebench.core.datamodel import TestCaseSpec
-        from nichebench.core.executor import TestResult
+        from nichebench.execution.orchestrator import TestResult
 
         tc = TestCaseSpec(id="drupal_runtime_001", type="runtime", raw={})
         result = TestResult("drupal_runtime", "runtime", tc, "openai/gpt-4o", "openai/gpt-4o")

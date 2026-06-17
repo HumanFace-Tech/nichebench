@@ -8,7 +8,8 @@ from unittest.mock import patch
 import pytest
 
 from nichebench.core.datamodel import TestCaseSpec
-from nichebench.core.executor import TestExecutor, TestResult
+from nichebench.execution.orchestrator import TestExecutor
+from nichebench.execution.result import TestResult
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -100,20 +101,19 @@ def _make_executor_for_trials():
     network_cfg = {"timeout": 30, "retry_attempts": 1, "retry_delay": 1}
 
     with (
-        patch("nichebench.core.executor.get_config") as mock_config,
+        patch("nichebench.execution.orchestrator.get_config") as mock_config,
         patch.object(TestExecutor, "_load_system_prompt", return_value=None),
         patch.object(TestExecutor, "_load_judge_system_prompt", return_value=None),
     ):
         mock_config.return_value.get_evaluation_config.return_value = {}
         mock_config.return_value.get_model_string.side_effect = lambda cfg: (f"{cfg['provider']}/{cfg['model']}")
-        executor = TestExecutor(
+        return TestExecutor(
             framework="drupal_runtime",
             category="runtime",
             mut_config=mut_cfg,
             judge_config=judge_cfg,
             network_config=network_cfg,
         )
-    return executor
 
 
 def test_execute_tests_parallel_sequential_sets_trial_metadata():
@@ -148,3 +148,41 @@ def test_execute_tests_parallel_sequential_single_trial_metadata():
     assert len(results) == 1
     assert results[0].trial == 1
     assert results[0].trials_total == 1
+
+
+def test_execute_tests_parallel_sequential_does_not_abort_on_agent_execution_error():
+    """Agent-execution trial errors should not stop remaining trials."""
+    executor = _make_executor_for_trials()
+    tc = TestCaseSpec(id="task_001", type="runtime", raw={})
+
+    def _fake_execute(test_case, runner=None, trial=0):
+        r = TestResult("drupal_runtime", "runtime", test_case, "openai/gpt-4o", "openai/gpt-4o")
+        r.error = "[WATCHDOG:stop-idle] Agent execution terminated"
+        r.judge_output = {"failure_class": "agent_execution", "first_failed_stage": "agent_execution"}
+        r.passed = False
+        return r
+
+    with patch.object(executor, "execute_test", side_effect=_fake_execute):
+        results = executor.execute_tests_parallel([tc], trials=3)
+
+    assert len(results) == 3
+    assert [r.trial for r in results] == [1, 2, 3]
+
+
+def test_execute_tests_parallel_sequential_aborts_on_workspace_setup_blocker():
+    """Workspace/config bootstrap blockers should still stop remaining trials."""
+    executor = _make_executor_for_trials()
+    tc = TestCaseSpec(id="task_001", type="runtime", raw={})
+
+    def _fake_execute(test_case, runner=None, trial=0):
+        r = TestResult("drupal_runtime", "runtime", test_case, "openai/gpt-4o", "openai/gpt-4o")
+        r.error = "workspace setup failed"
+        r.judge_output = {"failure_class": "drupal_environment", "first_failed_stage": "workspace_setup"}
+        r.passed = False
+        return r
+
+    with patch.object(executor, "execute_test", side_effect=_fake_execute):
+        results = executor.execute_tests_parallel([tc], trials=3)
+
+    assert len(results) == 1
+    assert results[0].trial == 1

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from nichebench.core.datamodel import TaskSpec
-from nichebench.core.loader_yaml import load_taskspecs_for_framework
+from nichebench.core.framework_loader import load_taskspecs_for_framework
 
 
 def discover_frameworks(

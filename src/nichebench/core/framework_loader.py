@@ -1,4 +1,29 @@
-"""YAML loader for test cases under framework packs."""
+"""YAML loader for framework task manifests and test case specs.
+
+This module reads task YAML files from framework data directories and
+produces normalised :class:`TestCaseSpec` objects.  It is distinct from
+:meth:`nichebench.core.prompt_loader.load_prompt_mapping`, which loads
+arbitrary key-value prompt overrides (a different concern).
+
+Entry points for maintainers
+===========================
+* :func:`load_testcase_from_file` — parses a single task YAML into a
+  :class:`TestCaseSpec`.  Handles both the older flat quiz/code/bug
+  structure and the newer runtime manifest format.
+* :func:`load_taskspecs_for_framework` — walks a framework data directory
+  and returns a list of :class:`TaskSpec` grouped by task type.
+
+Key boundaries
+=============
+* YAML parsing is delegated to ``yaml.safe_load``; callers do not need
+  to know which PyYAML API is used.
+* Runtime task detection: if a file sits under ``tasks/manifest/`` or has
+  ``task_type: runtime`` it is processed by the runtime branch, which
+  composes prompt/context from structured sub-fields (``description_structured``)
+  rather than using top-level ``prompt``/``context`` keys.
+* All errors are caught per-file so a single corrupt task does not abort
+  an entire framework load.
+"""
 
 from __future__ import annotations
 
@@ -56,6 +81,24 @@ def _compose_runtime_prompt(data: Dict[str, Any]) -> Optional[str]:
 
 
 def load_testcase_from_file(path: Path) -> TestCaseSpec:
+    """Load a single task YAML file into a :class:`TestCaseSpec`.
+
+    The function detects the task variant from the file structure:
+
+    * ``task_type: runtime`` or path under ``tasks/manifest/`` → runtime
+      manifest branch: prompt is built from ``description_structured``,
+      context from ``technical_hints``/``out_of_scope``.
+    * top-level ``question`` key → quiz
+    * top-level ``prompt`` key → code generation
+    * anything else → bug fixing
+
+    Raises:
+        ValueError: if the YAML root is not a mapping.
+
+    Returns:
+        A fully-populated :class:`TestCaseSpec`.  The ``raw`` field carries
+        the original dict for framework-specific extensions.
+    """
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
 
@@ -66,7 +109,7 @@ def load_testcase_from_file(path: Path) -> TestCaseSpec:
         source = data.get("source") if isinstance(data.get("source"), dict) else {}
         task_id = str(data.get("task_id") or data.get("id") or path.stem)
         prompt = data.get("prompt") or _compose_runtime_prompt(data)
-        tc = TestCaseSpec(
+        return TestCaseSpec(
             id=task_id,
             type="runtime",
             raw=data,
@@ -86,7 +129,6 @@ def load_testcase_from_file(path: Path) -> TestCaseSpec:
             ),
             file_path=str(path),
         )
-        return tc
 
     # Determine type
     if "question" in data:
@@ -98,7 +140,7 @@ def load_testcase_from_file(path: Path) -> TestCaseSpec:
     else:
         tc_type = "bug"
 
-    tc = TestCaseSpec(
+    return TestCaseSpec(
         id=str(data.get("id") or path.stem),
         type=tc_type,
         raw=data,
@@ -119,10 +161,27 @@ def load_testcase_from_file(path: Path) -> TestCaseSpec:
         browser_artifacts=data.get("browser_artifacts") if isinstance(data.get("browser_artifacts"), dict) else None,
         file_path=str(path),
     )
-    return tc
 
 
 def load_taskspecs_for_framework(framework_path: Path, framework_name: str) -> List[TaskSpec]:
+    """Walk a framework data directory and return all task specs.
+
+    Layouts supported:
+
+    * ``data/tasks/manifest/*.yaml`` — runtime manifests (flat list under
+      one ``TaskSpec`` with ``task_type="runtime"``).
+    * ``data/<task_type>/*.yaml`` — legacy layout; each subdirectory
+      becomes one ``TaskSpec`` with that ``task_type``.
+
+    Args:
+        framework_path: absolute path to the framework root
+          (e.g. ``.../frameworks/drupal``).
+        framework_name: name string stored in ``TaskSpec.framework``.
+
+    Returns:
+        List of :class:`TaskSpec` objects, one per discovered task type.
+        Empty list if ``data/`` does not exist.
+    """
     data_dir = framework_path / "data"
     tasks: List[TaskSpec] = []
     if not data_dir.exists():

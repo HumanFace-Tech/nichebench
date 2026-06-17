@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nichebench.core.datamodel import TestCaseSpec
-from nichebench.core.executor import TestExecutor
+from nichebench.execution.orchestrator import TestExecutor
+from nichebench.execution.runtime.scoring import CheckResult
 
 
 def _make_executor(runtime_config=None):
@@ -15,7 +16,7 @@ def _make_executor(runtime_config=None):
     network_cfg = {"timeout": 30, "retry_attempts": 1, "retry_delay": 1}
 
     with (
-        patch("nichebench.core.executor.get_config") as mock_config,
+        patch("nichebench.execution.orchestrator.get_config") as mock_config,
         patch.object(TestExecutor, "_load_system_prompt", return_value=None),
         patch.object(TestExecutor, "_load_judge_system_prompt", return_value=None),
     ):
@@ -28,6 +29,57 @@ def _make_executor(runtime_config=None):
             judge_config=judge_cfg,
             network_config=network_cfg,
         )
+
+
+def test_extract_validation_artifacts_prefers_failed_checks():
+    artifacts = TestExecutor._extract_validation_artifacts(
+        [
+            CheckResult("PHPCS", "composer_script_clean", True, "ok"),
+            CheckResult(
+                "PHPCS final",
+                "composer_script_clean",
+                False,
+                "failed",
+                details={"command": "ddev composer cs", "stdout": "line too long", "stderr": "exit 1"},
+            ),
+            CheckResult(
+                "PHPStan final",
+                "phpstan_clean",
+                False,
+                "phpstan failed",
+                details={"stdout": "undefined method reason()"},
+            ),
+            CheckResult("No PHP errors in watchdog", "drush_watchdog_clean", False, "PHP errors found"),
+        ]
+    )
+
+    assert "last_phpcs.txt" in artifacts
+    assert "line too long" in artifacts["last_phpcs.txt"]
+    assert "last_phpstan.txt" in artifacts
+    assert "undefined method reason()" in artifacts["last_phpstan.txt"]
+    assert "watchdog_errors.txt" in artifacts
+    assert "PHP errors found" in artifacts["watchdog_errors.txt"]
+
+
+def test_save_runtime_artifacts_writes_validation_text_files(tmp_path: Path):
+    executor = _make_executor({"runtime_artifact_retention": "standard"})
+    executor.results_outdir = tmp_path
+    test_case = TestCaseSpec(id="runtime_001", type="runtime", raw={}, prompt="Task")
+    result = MagicMock()
+    result.test_case = test_case
+    result.trials_total = 1
+    result.runtime_artifacts = {
+        "last_phpcs.txt": "phpcs diagnostics",
+        "last_phpstan.txt": "phpstan diagnostics",
+        "watchdog_errors.txt": "watchdog diagnostics",
+    }
+
+    executor._save_runtime_artifacts(result)
+
+    outdir = tmp_path / "runtime" / "runtime_001"
+    assert (outdir / "last_phpcs.txt").read_text() == "phpcs diagnostics"
+    assert (outdir / "last_phpstan.txt").read_text() == "phpstan diagnostics"
+    assert (outdir / "watchdog_errors.txt").read_text() == "watchdog diagnostics"
 
 
 def test_execute_runtime_test_does_not_auto_pass_when_deterministic_check_fails():
@@ -129,10 +181,10 @@ def test_execute_runtime_test_uses_workspace_lifecycle_with_task_branch_preferre
     )()
 
     with (
-        patch("nichebench.core.executor.Workspace", return_value=mock_workspace) as mock_workspace_cls,
-        patch("nichebench.core.executor.find_git_root", return_value=tmp_path) as mock_find_root,
-        patch("nichebench.core.executor.resolve_branch_to_sha", return_value="sha-task") as mock_resolve_sha,
-        patch("nichebench.core.executor.validate_runtime_testcase"),
+        patch("nichebench.execution.orchestrator.Workspace", return_value=mock_workspace) as mock_workspace_cls,
+        patch("nichebench.execution.orchestrator.find_git_root", return_value=tmp_path) as mock_find_root,
+        patch("nichebench.execution.orchestrator.resolve_branch_to_sha", return_value="sha-task") as mock_resolve_sha,
+        patch("nichebench.execution.orchestrator.validate_runtime_testcase"),
         patch.object(executor, "_run_runtime_preflight_host", return_value=[]),
         patch.object(executor, "_run_runtime_preflight_workspace", return_value=[]),
         patch.object(executor, "_inject_task_markdown"),
@@ -142,7 +194,7 @@ def test_execute_runtime_test_uses_workspace_lifecycle_with_task_branch_preferre
             "_run_container_runtime_task",
             return_value=("mut output", "user input", "run log", {}, "image", None),
         ),
-        patch("nichebench.core.executor.RuntimeScorer") as mock_scorer_cls,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
     ):
         mock_scorer = mock_scorer_cls.return_value
         mock_scorer.run_deterministic_checks.return_value = []
@@ -157,6 +209,63 @@ def test_execute_runtime_test_uses_workspace_lifecycle_with_task_branch_preferre
     mock_workspace.ddev_start.assert_called_once_with(
         setup_mode="db_snapshot",
         timeout=123,
+        post_setup_commands=None,
+    )
+
+
+def test_execute_runtime_test_uses_runtime_timeout_minutes_when_seconds_not_set(tmp_path):
+    executor = _make_executor({"runtime_mode": "cage", "runtime_timeout_minutes": 45})
+    test_case = TestCaseSpec(
+        id="runtime_workspace_minutes",
+        type="runtime",
+        raw={
+            "source": {"task_branch": "task/runtime_workspace_minutes", "base_branch": "main"},
+            "environment": {"setup_mode": "db_snapshot"},
+        },
+        prompt="Do the runtime task",
+        file_path=str(tmp_path / "manifest.yaml"),
+    )
+
+    mock_workspace = MagicMock()
+    mock_workspace.path = tmp_path / "workspace"
+    mock_workspace.ddev_project_name = "nb-runtime-workspace-minutes"
+
+    mock_score = type(
+        "Score",
+        (),
+        {
+            "deterministic_score": 1.0,
+            "judge_score": None,
+            "final_score": 1.0,
+            "passed": True,
+        },
+    )()
+
+    with (
+        patch("nichebench.execution.orchestrator.Workspace", return_value=mock_workspace),
+        patch("nichebench.execution.orchestrator.find_git_root", return_value=tmp_path),
+        patch("nichebench.execution.orchestrator.resolve_branch_to_sha", return_value="sha-task"),
+        patch("nichebench.execution.orchestrator.validate_runtime_testcase"),
+        patch.object(executor, "_run_runtime_preflight_host", return_value=[]),
+        patch.object(executor, "_run_runtime_preflight_workspace", return_value=[]),
+        patch.object(executor, "_inject_task_markdown"),
+        patch.object(executor, "_load_runtime_checks", return_value=[]),
+        patch.object(
+            executor,
+            "_run_container_runtime_task",
+            return_value=("mut output", "user input", "run log", {}, "image", None),
+        ),
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
+    ):
+        mock_scorer = mock_scorer_cls.return_value
+        mock_scorer.run_deterministic_checks.return_value = []
+        mock_scorer.compute_hybrid_score.return_value = mock_score
+
+        executor.execute_runtime_test(test_case)
+
+    mock_workspace.ddev_start.assert_called_once_with(
+        setup_mode="db_snapshot",
+        timeout=2700,
         post_setup_commands=None,
     )
 
@@ -179,8 +288,8 @@ def test_execute_runtime_test_falls_back_to_temp_workspace_without_source_enviro
     )()
 
     with (
-        patch("nichebench.core.executor.Workspace") as mock_workspace_cls,
-        patch("nichebench.core.executor.tempfile.mkdtemp", return_value=str(temp_workspace)),
+        patch("nichebench.execution.orchestrator.Workspace") as mock_workspace_cls,
+        patch("nichebench.execution.orchestrator.tempfile.mkdtemp", return_value=str(temp_workspace)),
         patch.object(executor, "_run_runtime_preflight_host", return_value=[]),
         patch.object(executor, "_run_runtime_preflight_workspace", return_value=[]),
         patch.object(executor, "_inject_task_markdown"),
@@ -190,7 +299,7 @@ def test_execute_runtime_test_falls_back_to_temp_workspace_without_source_enviro
             "_run_container_runtime_task",
             return_value=("mut output", "user input", "run log", {}, "image", None),
         ),
-        patch("nichebench.core.executor.RuntimeScorer") as mock_scorer_cls,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
     ):
         mock_scorer = mock_scorer_cls.return_value
         mock_scorer.run_deterministic_checks.return_value = []
@@ -230,10 +339,10 @@ def test_execute_runtime_test_keeps_workspace_when_runtime_keep_workspaces_enabl
     )()
 
     with (
-        patch("nichebench.core.executor.Workspace", return_value=mock_workspace),
-        patch("nichebench.core.executor.find_git_root", return_value=tmp_path),
-        patch("nichebench.core.executor.resolve_branch_to_sha", return_value="sha-task"),
-        patch("nichebench.core.executor.validate_runtime_testcase"),
+        patch("nichebench.execution.orchestrator.Workspace", return_value=mock_workspace),
+        patch("nichebench.execution.orchestrator.find_git_root", return_value=tmp_path),
+        patch("nichebench.execution.orchestrator.resolve_branch_to_sha", return_value="sha-task"),
+        patch("nichebench.execution.orchestrator.validate_runtime_testcase"),
         patch.object(executor, "_run_runtime_preflight_host", return_value=[]),
         patch.object(executor, "_run_runtime_preflight_workspace", return_value=[]),
         patch.object(executor, "_inject_task_markdown"),
@@ -243,7 +352,7 @@ def test_execute_runtime_test_keeps_workspace_when_runtime_keep_workspaces_enabl
             "_run_container_runtime_task",
             return_value=("mut output", "user input", "run log", {}, "image", None),
         ),
-        patch("nichebench.core.executor.RuntimeScorer") as mock_scorer_cls,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
     ):
         mock_scorer = mock_scorer_cls.return_value
         mock_scorer.run_deterministic_checks.return_value = []
@@ -410,7 +519,7 @@ def test_execute_runtime_test_strict_mode_fails_on_disallowed_tools():
             "_run_container_runtime_task",
             return_value=("mut output", "user input", "run log", {}, "image", trajectory),
         ),
-        patch("nichebench.core.executor.RuntimeScorer") as mock_scorer_cls,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
     ):
         mock_scorer = mock_scorer_cls.return_value
         mock_scorer.run_deterministic_checks.return_value = []
@@ -460,7 +569,7 @@ def test_execute_runtime_test_two_pass_review_nudge_enabled(tmp_path):
                 (second_pass_output, "user input 2", second_pass_log, {}, "image", None, None),
             ],
         ) as mock_retry,
-        patch("nichebench.core.executor.RuntimeScorer") as mock_scorer_cls,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
     ):
         mock_scorer = mock_scorer_cls.return_value
         mock_scorer.run_deterministic_checks.return_value = []
@@ -527,7 +636,7 @@ def test_execute_runtime_test_second_pass_uses_review_nudge_as_task_input_overri
                 (second_pass_output, "user input 2", "second pass log", {}, "image", None, None),
             ],
         ) as mock_retry,
-        patch("nichebench.core.executor.RuntimeScorer") as mock_scorer_cls,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
     ):
         mock_scorer = mock_scorer_cls.return_value
         mock_scorer.run_deterministic_checks.return_value = []
@@ -585,7 +694,7 @@ def test_execute_runtime_test_review_nudge_disabled_no_second_pass(tmp_path):
             executor,
             "_run_container_runtime_task",
         ) as mock_second_pass,
-        patch("nichebench.core.executor.RuntimeScorer") as mock_scorer_cls,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
     ):
         mock_scorer = mock_scorer_cls.return_value
         mock_scorer.run_deterministic_checks.return_value = []
@@ -638,7 +747,7 @@ def test_review_pass_uses_retry_wrapper(tmp_path):
         ) as mock_retry,
         patch.object(executor, "_run_container_runtime_task") as mock_direct,
         patch.object(executor, "_load_review_nudge", return_value="REVIEW_NUDGE"),
-        patch("nichebench.core.executor.RuntimeScorer") as mock_scorer_cls,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
     ):
         mock_scorer = mock_scorer_cls.return_value
         mock_scorer.run_deterministic_checks.return_value = []
@@ -771,3 +880,333 @@ class TestJudgeSampling:
             executor.execute_runtime_test(test_case)
 
         assert mock_judge.call_count == 1
+
+
+# Catastrophic failure short-circuit tests
+# ---------------------------------------------------------------------------
+
+
+def _make_catastrophic_test_case():
+    """Helper that builds a test case with checks and judge checklist."""
+    return TestCaseSpec(
+        id="runtime_catastrophic",
+        type="runtime",
+        raw={
+            "checks": [{"op": "file_exists", "path": "web/modules/custom/example.module", "label": "module exists"}],
+            "llm_judge": {"checklist": [{"id": "c1", "question": "Did it work?", "weight": 1.0}]},
+            "scoring": {"deterministic_weight": 0.5, "llm_weight": 0.5, "threshold": 0.7},
+        },
+        prompt="Do the runtime task",
+    )
+
+
+def test_catastrophic_startup_dh_not_a_function_skips_checks_and_judge():
+    """When run.log contains 'dh is not a function', checks and judge must be skipped."""
+    executor = _make_executor({"runtime_mode": "cage"})
+    test_case = _make_catastrophic_test_case()
+
+    fatal_run_log = "step-start\nSTDERR: DH is not a function\nstep-finish"
+
+    with (
+        patch.object(executor, "_run_runtime_preflight_host", return_value=[]),
+        patch.object(executor, "_run_runtime_preflight_workspace", return_value=[]),
+        patch.object(executor, "_inject_task_markdown"),
+        patch.object(
+            executor,
+            "_run_container_runtime_task",
+            return_value=("", "user input", fatal_run_log, {}, "image", None),
+        ),
+        patch.object(executor.judge_runner, "evaluate_test") as mock_judge,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
+    ):
+        result = executor.execute_runtime_test(test_case)
+
+    # Judge must NOT have been called
+    mock_judge.assert_not_called()
+    # RuntimeScorer.run_deterministic_checks must NOT have been called
+    mock_scorer_cls.return_value.run_deterministic_checks.assert_not_called()
+
+    # Result must be failed
+    assert result.passed is False
+    assert result.judge_output["catastrophic_failure"] is True
+    assert result.judge_output["error"] != ""
+    # checks.json must NOT be present (no deterministic check run)
+    assert "checks.json" not in result.runtime_artifacts
+
+
+def test_catastrophic_timeout_in_mut_output_skips_checks_and_judge():
+    """When mut_output encodes a timeout error, checks and judge must be skipped."""
+    executor = _make_executor({"runtime_mode": "cage"})
+    test_case = _make_catastrophic_test_case()
+
+    with (
+        patch.object(executor, "_run_runtime_preflight_host", return_value=[]),
+        patch.object(executor, "_run_runtime_preflight_workspace", return_value=[]),
+        patch.object(executor, "_inject_task_markdown"),
+        patch.object(
+            executor,
+            "_run_container_runtime_task",
+            return_value=("[Error: process timed out after 1800s]", "user input", "some log", {}, "image", None),
+        ),
+        patch.object(executor.judge_runner, "evaluate_test") as mock_judge,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
+    ):
+        result = executor.execute_runtime_test(test_case)
+
+    mock_judge.assert_not_called()
+    mock_scorer_cls.return_value.run_deterministic_checks.assert_not_called()
+
+    assert result.passed is False
+    assert result.judge_output["catastrophic_failure"] is True
+    assert "checks.json" not in result.runtime_artifacts
+
+
+def test_normal_run_still_invokes_checks_and_judge():
+    """A normal (non-catastrophic) run still invokes both checks and judge."""
+    executor = _make_executor({"runtime_mode": "cage"})
+    test_case = _make_catastrophic_test_case()
+
+    mock_score = type(
+        "Score",
+        (),
+        {"deterministic_score": 1.0, "judge_score": 0.9, "final_score": 0.95, "passed": True},
+    )()
+
+    with (
+        patch.object(executor, "_run_runtime_preflight_host", return_value=[]),
+        patch.object(executor, "_run_runtime_preflight_workspace", return_value=[]),
+        patch.object(executor, "_inject_task_markdown"),
+        patch.object(
+            executor,
+            "_run_container_runtime_task",
+            return_value=("I finished the task.", "user input", "build step-start step-finish", {}, "image", None),
+        ),
+        patch.object(
+            executor.judge_runner,
+            "evaluate_test",
+            return_value=({"overall_score": 0.9}, True),
+        ) as mock_judge,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
+    ):
+        mock_scorer = mock_scorer_cls.return_value
+        mock_scorer.run_deterministic_checks.return_value = []
+        mock_scorer.compute_hybrid_score.return_value = mock_score
+
+        result = executor.execute_runtime_test(test_case)
+
+    mock_scorer.run_deterministic_checks.assert_called_once()
+    mock_judge.assert_called_once()
+    assert result.judge_output.get("catastrophic_failure") is not True
+    assert "checks.json" in result.runtime_artifacts
+
+
+# ---------------------------------------------------------------------------
+# Watchdog threshold semantics
+# ---------------------------------------------------------------------------
+
+
+class TestWatchdogThresholdSemantics:
+    """Validate that stop-idle watchdog respects the inactivity threshold floor.
+
+    These tests call _resolve_watchdog_marker directly — no subprocess mocking
+    needed, making them fast and deterministic.
+    """
+
+    def test_stop_idle_not_triggered_when_idle_below_inactivity(self):
+        """has_stop=True, idle above stop_idle but below inactivity → no trigger."""
+        # stop_idle=240s, inactivity=600s, idle=300s
+        # 300 >= 240 (stop_idle) but 300 < 600 (inactivity) → must NOT fire
+        marker = TestExecutor._resolve_watchdog_marker(
+            has_stop=True,
+            idle_secs=300.0,
+            stop_idle_seconds=240.0,
+            inactivity_seconds=600.0,
+        )
+        assert marker is None, f"stop-idle fired prematurely at idle=300s (stop_idle=240s, inactivity=600s): {marker}"
+
+    def test_stop_idle_triggered_when_idle_at_or_above_inactivity(self):
+        """has_stop=True, idle >= inactivity → stop-idle fires (not inactivity)."""
+        # stop_idle=240s, inactivity=600s, idle=600s → fires as stop-idle
+        marker = TestExecutor._resolve_watchdog_marker(
+            has_stop=True,
+            idle_secs=600.0,
+            stop_idle_seconds=240.0,
+            inactivity_seconds=600.0,
+        )
+        assert marker == "[WATCHDOG:stop-idle]"
+
+    def test_stop_idle_triggered_well_above_inactivity(self):
+        """has_stop=True, idle >> inactivity → stop-idle fires."""
+        marker = TestExecutor._resolve_watchdog_marker(
+            has_stop=True,
+            idle_secs=900.0,
+            stop_idle_seconds=240.0,
+            inactivity_seconds=600.0,
+        )
+        assert marker == "[WATCHDOG:stop-idle]"
+
+    def test_inactivity_fires_when_no_stop_and_idle_above_threshold(self):
+        """has_stop=False, idle >= inactivity → inactivity watchdog fires."""
+        marker = TestExecutor._resolve_watchdog_marker(
+            has_stop=False,
+            idle_secs=601.0,
+            stop_idle_seconds=240.0,
+            inactivity_seconds=600.0,
+        )
+        assert marker == "[WATCHDOG:inactivity]"
+
+    def test_no_marker_when_below_all_thresholds(self):
+        """idle < both thresholds → no watchdog marker."""
+        marker = TestExecutor._resolve_watchdog_marker(
+            has_stop=True,
+            idle_secs=100.0,
+            stop_idle_seconds=240.0,
+            inactivity_seconds=600.0,
+        )
+        assert marker is None
+
+    def test_stop_idle_equal_to_inactivity_fires_at_inactivity(self):
+        """When stop_idle == inactivity, stop-idle fires exactly at that boundary."""
+        marker = TestExecutor._resolve_watchdog_marker(
+            has_stop=True,
+            idle_secs=600.0,
+            stop_idle_seconds=600.0,
+            inactivity_seconds=600.0,
+        )
+        assert marker == "[WATCHDOG:stop-idle]"
+
+    def test_stop_idle_higher_than_inactivity_uses_stop_idle_as_floor(self):
+        """When stop_idle > inactivity, stop_idle is the effective floor.
+
+        idle=650s, stop_idle=700s, inactivity=600s → neither fires yet.
+        """
+        marker = TestExecutor._resolve_watchdog_marker(
+            has_stop=True,
+            idle_secs=650.0,
+            stop_idle_seconds=700.0,
+            inactivity_seconds=600.0,
+        )
+        # idle < stop_idle (700) so stop-idle must NOT fire.
+        # idle >= inactivity (600) but has_stop=True means the max() floor applies.
+        assert marker is None
+
+    def test_marker_text_stop_idle_unchanged(self):
+        """Emitted marker text for stop-idle is exactly '[WATCHDOG:stop-idle]'."""
+        marker = TestExecutor._resolve_watchdog_marker(
+            has_stop=True,
+            idle_secs=700.0,
+            stop_idle_seconds=240.0,
+            inactivity_seconds=600.0,
+        )
+        assert marker == "[WATCHDOG:stop-idle]"
+
+    def test_marker_text_inactivity_unchanged(self):
+        """Emitted marker text for inactivity is exactly '[WATCHDOG:inactivity]'."""
+        marker = TestExecutor._resolve_watchdog_marker(
+            has_stop=False,
+            idle_secs=700.0,
+            stop_idle_seconds=240.0,
+            inactivity_seconds=600.0,
+        )
+        assert marker == "[WATCHDOG:inactivity]"
+
+
+def test_watchdog_stop_idle_skips_checks_and_records_agent_did_not_exit():
+    """stop-idle watchdog: checks/judge skipped, failure_code=agent.did_not_exit."""
+    executor = _make_executor({"runtime_mode": "cage", "runtime_enable_diagnostics": True})
+    test_case = _make_catastrophic_test_case()
+
+    with (
+        patch.object(executor, "_run_runtime_preflight_host", return_value=[]),
+        patch.object(executor, "_run_runtime_preflight_workspace", return_value=[]),
+        patch.object(executor, "_inject_task_markdown"),
+        patch.object(
+            executor,
+            "_run_container_runtime_task",
+            side_effect=RuntimeError("[WATCHDOG:stop-idle] Agent execution terminated by watchdog after 245s"),
+        ),
+        patch.object(executor.judge_runner, "evaluate_test") as mock_judge,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
+    ):
+        result = executor.execute_runtime_test(test_case)
+
+    mock_judge.assert_not_called()
+    mock_scorer_cls.return_value.run_deterministic_checks.assert_not_called()
+    assert result.passed is False
+    assert result.judge_output["catastrophic_failure"] is True
+    assert result.judge_output.get("failure_code") == "agent.did_not_exit"
+    assert "checks.json" not in result.runtime_artifacts
+
+
+def test_watchdog_inactivity_skips_checks_and_records_agent_execution_stalled():
+    """inactivity watchdog: checks/judge skipped, failure_code=agent.execution_stalled."""
+    executor = _make_executor({"runtime_mode": "cage", "runtime_enable_diagnostics": True})
+    test_case = _make_catastrophic_test_case()
+
+    with (
+        patch.object(executor, "_run_runtime_preflight_host", return_value=[]),
+        patch.object(executor, "_run_runtime_preflight_workspace", return_value=[]),
+        patch.object(executor, "_inject_task_markdown"),
+        patch.object(
+            executor,
+            "_run_container_runtime_task",
+            side_effect=RuntimeError("[WATCHDOG:inactivity] Agent execution terminated by watchdog after 605s"),
+        ),
+        patch.object(executor.judge_runner, "evaluate_test") as mock_judge,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
+    ):
+        result = executor.execute_runtime_test(test_case)
+
+    mock_judge.assert_not_called()
+    mock_scorer_cls.return_value.run_deterministic_checks.assert_not_called()
+    assert result.passed is False
+    assert result.judge_output["catastrophic_failure"] is True
+    assert result.judge_output.get("failure_code") == "agent.execution_stalled"
+    assert "checks.json" not in result.runtime_artifacts
+
+
+def test_normal_run_unaffected_by_watchdog_config():
+    """A normal run with watchdog enabled still invokes checks and judge."""
+    executor = _make_executor(
+        {
+            "runtime_mode": "cage",
+            "runtime_watchdog_enable": True,
+            "runtime_watchdog_poll_seconds": 5,
+            "runtime_watchdog_stop_idle_seconds": 240,
+            "runtime_watchdog_inactivity_seconds": 600,
+        }
+    )
+    test_case = _make_catastrophic_test_case()
+
+    mock_score = type(
+        "Score",
+        (),
+        {"deterministic_score": 1.0, "judge_score": 0.9, "final_score": 0.95, "passed": True},
+    )()
+
+    with (
+        patch.object(executor, "_run_runtime_preflight_host", return_value=[]),
+        patch.object(executor, "_run_runtime_preflight_workspace", return_value=[]),
+        patch.object(executor, "_inject_task_markdown"),
+        patch.object(
+            executor,
+            "_run_container_runtime_task",
+            return_value=("I finished the task.", "user input", "build step-start step-finish", {}, "image", None),
+        ),
+        patch.object(
+            executor.judge_runner,
+            "evaluate_test",
+            return_value=({"overall_score": 0.9}, True),
+        ) as mock_judge,
+        patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
+    ):
+        mock_scorer = mock_scorer_cls.return_value
+        mock_scorer.run_deterministic_checks.return_value = []
+        mock_scorer.compute_hybrid_score.return_value = mock_score
+
+        result = executor.execute_runtime_test(test_case)
+
+    mock_scorer.run_deterministic_checks.assert_called_once()
+    mock_judge.assert_called_once()
+    assert result.judge_output.get("catastrophic_failure") is not True
+    assert "checks.json" in result.runtime_artifacts

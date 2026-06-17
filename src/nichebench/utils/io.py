@@ -1,5 +1,6 @@
 """IO helpers for results directory and saving JSONL/JSON summaries."""
 
+import contextlib
 import json
 import re
 from pathlib import Path
@@ -25,8 +26,30 @@ def save_jsonl(path: Path, rows: list[dict[str, Any]], mode: str = "w"):
 
 
 def save_json(path: Path, obj: Any):
-    with path.open("w", encoding="utf-8") as fh:
-        json.dump(obj, fh, ensure_ascii=False, indent=2)
+    """Write JSON atomically via a sibling temporary file then ``os.replace``.
+
+    A crash mid-write leaves the original file (or no file) in place rather
+    than a half-written/truncated one.  This protects ``summary.json`` from
+    becoming unrecoverable on SIGKILL or disk-full conditions.
+    """
+    import os
+    import tempfile
+
+    path = Path(path)
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(obj, fh, ensure_ascii=False, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        # Best-effort cleanup of the temp file on failure.
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
 
 
 def strip_think_tags(text: Any) -> Any:
@@ -51,6 +74,4 @@ def strip_think_tags(text: Any) -> Any:
 
     # Clean up any extra whitespace that might be left behind
     cleaned = re.sub(r"\n\s*\n\s*\n", "\n\n", cleaned)  # Collapse multiple empty lines
-    cleaned = cleaned.strip()
-
-    return cleaned
+    return cleaned.strip()
