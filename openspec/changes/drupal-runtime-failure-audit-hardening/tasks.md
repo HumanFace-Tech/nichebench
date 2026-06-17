@@ -38,7 +38,7 @@
 - [x] 6.1 Implement feature-flagged rollout path for new diagnostics fields (`runtime_enable_diagnostics` config flag, default True).
 - [x] 6.2 Ensure existing runtime scoring/report commands remain functional with legacy artifacts — confirmed by 4-model × 3-trial validation matrix.
 - [x] 6.3 Validate end-to-end on `drupal_runtime_001` with at least one known-fail and one known-pass fixture — confirmed with groq/llamacpp 4-model matrix across 3 trials.
-- [x] 6.4 Update release notes and operator guidance for new runtime diagnostics model — documented in `docs/runtime-production-readiness-audit.md`.
+- [x] 6.4 Update release notes and operator guidance for new runtime diagnostics model — documented in `docs/reports/runtime-production-readiness-audit-2026-06-15.md`.
 
 ## 7. Recent-Change Codebase Audit (Production Readiness)
 
@@ -52,7 +52,7 @@
 
 - [x] 8.1 Execute an A→Z failure walkthrough on the latest failed `drupal_runtime_001` run artifacts and classify failure by taxonomy.
 - [x] 8.2 Add comparison of `trajectory.json` vs `runtime_trace.json` responsibilities — documented in `docs/runtime-diagnostics-playbook.md` § "Artifact map".
-- [x] 8.3 Add a final operator report template summarizing: root cause, contributing factors, remediation, and confidence level — see `docs/runtime-failure-report-template.md`.
+- [x] 8.3 Add a final operator report template summarizing: root cause, contributing factors, remediation, and confidence level — see `docs/runtime-diagnostics-playbook.md`.
 - [x] 8.4 Produce hardened artifact bundle with redacted sensitive fields, deterministic checks output, and failure fingerprint — implemented in executor.py `_redact_artifact_payload`.
 - [x] 9.1 Define validation matrix and fixed config for `drupal_runtime_001` across: `groq/openai/gpt-oss-20b`, `groq/openai/gpt-oss-120b`, `llamacpp/qwen3.5-9b`, `llamacpp/qwen3.6-35b-a3b`.
 - [x] 9.2 Run trial-1 for each model in the matrix and capture deterministic/judge outcomes plus failure classes.

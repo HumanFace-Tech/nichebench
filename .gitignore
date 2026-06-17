@@ -161,6 +161,8 @@ DATASET_INTEGRATION_NOTES.md
 create_datasets.py
 PROGRESS.md
 NOTES.md
+DIGEST.md
+PLAN.md
 
 # Local validation artifacts
 *_validation.json
@@ -168,6 +170,12 @@ NOTES.md
 # Session planning files (local tracking)
 PLAN.yml
 BLOCKERS.md
+
+# Root-level DDEV artifacts (runtime pack lives in submodule)
+.ddev/
+
+# Generated audit/analysis reports (raw outputs)
+reports/
 
 # Runtime task workspaces (ephemeral, never commit)
 workspaces/

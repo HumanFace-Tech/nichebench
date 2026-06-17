@@ -1,6 +1,10 @@
 # Runtime Task Authoring Workflow
 
-Runtime tasks in NicheBench evaluate agent performance in realistic Drupal environments using DDEV.
+> **Related:** [Architecture & Lifecycle](./runtime-architecture-lifecycle.md) | [Smoke Tests](./runtime-smoke-tests.md) | [Diagnostics Playbook](./runtime-diagnostics-playbook.md)
+
+---
+
+Runtime tasks evaluate agent performance in realistic Drupal environments using DDEV.
 
 ## Manifest Schema
 
@@ -21,7 +25,7 @@ Runtime tasks are defined in YAML files with `task_type: runtime`.
   - `judge_weight`: Weight for LLM judge rubric (default 0.3).
 - `deliverables`: List of expected files or changes.
 
-## Runtime execution settings
+## Runtime Execution Settings
 
 `evaluation` config supports:
 
@@ -46,18 +50,38 @@ Cage runs expose explicit mount islands for auditability:
 
 The exact island mapping used for each run is persisted in runtime `metadata.json` under `island_topology`.
 
-## Artifact bundle
+## Runtime Execution Flow
 
-Runtime runs emit a normalized bundle under the results run directory:
+```text
+manifest/checks YAML
+         │
+         ▼
+isolated workspace checkout ──► DDEV start/import ──► TASK.md (+ optional HINTS.md)
+         │                                                  │
+         │                                                  ▼
+         │                                           OpenCode cage MUT
+         │                                                  │
+         ▼                                                  ▼
+deterministic checks ◄──── final workspace state ◄──── run.log / trajectory
+         │
+         ▼
+artifact bundle + optional LLM judge + hybrid score
+```
 
-- `minimal`: `metadata.json`, `runtime_trace.json`
-- `standard`: `minimal` + `checks.json`, `final.diff`, `git-log.txt`, `run.log`, plus `phpcs.json` / `phpstan.json` when static checks are present
-- `full`: `standard` + `command_log.json`, optional browser payloads, and other raw artifact payloads
+## Artifact Bundle
+
+Runtime runs emit a normalized bundle under the results run directory. Retention controls how much is persisted:
+
+| Retention | Artifacts |
+|---|---|
+| `minimal` | `metadata.json`, `runtime_trace.json` |
+| `standard` | `minimal` + `checks.json`, `final.diff`, `run.log`, `trajectory.json`, `last_phpcs.txt`, `last_phpstan.txt`, `watchdog_errors.txt` when available |
+| `full` | `standard` + optional raw/debug/browser payloads when enabled |
 
 Optional browser artifacts can be attached when enabled by profile/config.
 
-Static-analysis artifacts are intended for judge inspection. The LLM judge should
-consume `phpcs.json` / `phpstan.json` instead of executing DDEV commands directly.
+Static-analysis and watchdog artifacts are intended for judge/operator inspection.
+The LLM judge consumes the artifact bundle; it does not execute DDEV commands directly.
 
 ### Deterministic Checks
 
@@ -67,7 +91,7 @@ consume `phpcs.json` / `phpstan.json` instead of executing DDEV commands directl
 
 ## Branch Maintenance
 
-Tasks should be authored on branches in the `nichebench-data-drupal` repository following the `task/*` prefix.
+Tasks should be authored on branches in the `nichebench-drupal-runtime-pack` repository following the `task/*` prefix.
 
 1. Create a branch from `seed/main`.
 2. Implement the "broken" state or the starting point for the task.
@@ -76,7 +100,7 @@ Tasks should be authored on branches in the `nichebench-data-drupal` repository 
 
 The sync script `scripts/sync_data_branches.py` can be used to propagate updates from `seed/main` to all `task/*` branches.
 
-## Cleanup and maintenance
+## Cleanup and Maintenance
 
 Use `scripts/runtime_maintenance.py` for conservative disk cleanup:
 
