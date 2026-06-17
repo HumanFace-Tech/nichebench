@@ -58,9 +58,12 @@ class DeepEvalCodeGenerationMetric(BaseMetric):
             # Extract test case data
             prompt = getattr(test_case, "input", "") or ""
             generated_code = getattr(test_case, "actual_output", "") or ""
-            checklist = getattr(test_case, "checklist", [])
-            judge_system_prompt = getattr(test_case, "judge_system_prompt", None)
-            judge_notes = getattr(test_case, "judge_notes", None)
+            # Dynamic fields travel on ``metadata`` (DeepEval ≥3.4 made
+            # LLMTestCase strict pydantic — no free-form setattr).
+            meta = dict(test_case.metadata) if test_case.metadata else {}
+            checklist = meta.get("checklist", [])
+            judge_system_prompt = meta.get("judge_system_prompt")
+            judge_notes = meta.get("judge_notes")
 
             # Use the new score_code_generation method
             judge_model_str = self.judge_model or self.model or "openai/gpt-4o"

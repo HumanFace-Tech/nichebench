@@ -4,8 +4,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from nichebench.core.datamodel import TestCaseSpec
-from nichebench.core.executor import TestExecutor
-from nichebench.core.scoring import RuntimeScorer
+from nichebench.execution.orchestrator import TestExecutor
+from nichebench.execution.runtime.scoring import RuntimeScorer
 
 
 def _make_executor(runtime_config=None):
@@ -14,7 +14,7 @@ def _make_executor(runtime_config=None):
     network_cfg = {"timeout": 30, "retry_attempts": 1, "retry_delay": 1}
 
     with (
-        patch("nichebench.core.executor.get_config") as mock_config,
+        patch("nichebench.execution.orchestrator.get_config") as mock_config,
         patch.object(TestExecutor, "_load_system_prompt", return_value=None),
         patch.object(TestExecutor, "_load_judge_system_prompt", return_value=None),
     ):

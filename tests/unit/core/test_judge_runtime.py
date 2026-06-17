@@ -5,7 +5,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from nichebench.core.datamodel import TestCaseSpec
-from nichebench.core.executor import (
+from nichebench.execution.runners.judge import (
     JudgeRunner,
     _build_runtime_artifact_summary,
     _build_runtime_task_description,

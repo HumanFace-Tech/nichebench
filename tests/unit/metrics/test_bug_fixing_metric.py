@@ -33,11 +33,7 @@ class MockBugJudge:
                 has_replacement = "messenger" in fix_lower
                 # If it's a before/after example with replacement, that's good
                 # If it just uses the deprecated function without context, that's bad
-                if has_before_after and has_replacement:
-                    passes = True
-                else:
-                    # Simple check: does it mention the deprecated function without context?
-                    passes = "drupal_set_message" not in fix_lower
+                passes = True if has_before_after and has_replacement else "drupal_set_message" not in fix_lower
                 explanation = f"Avoids drupal_set_message() properly: {passes}"
             elif "drupal 11" in criterion_lower:
                 # Check if fix mentions modern Drupal patterns
@@ -89,12 +85,14 @@ $this->messenger->addMessage('Article created successfully!');
         expected_output="",  # Not used for bug fixing
     )
 
-    # Add checklist as attribute (this would normally come from YAML)
-    setattr(
-        tc,
-        "checklist",
-        ["Must avoid drupal_set_message()", "Must work on Drupal 11", "Should mention proper service usage"],
-    )
+    # Add checklist via metadata (DeepEval ≥3.4 made LLMTestCase strict pydantic)
+    tc.metadata = {
+        "checklist": [
+            "Must avoid drupal_set_message()",
+            "Must work on Drupal 11",
+            "Should mention proper service usage",
+        ]
+    }
 
     metric = DeepEvalBugFixingMetric(judge=MockBugJudge(), model="mock")
 
@@ -114,7 +112,7 @@ def test_deepeval_bug_fixing_metric_failure():
 
     tc = LLMTestCase(input="Fix deprecated drupal_set_message() usage", actual_output=fix_output, expected_output="")
 
-    setattr(tc, "checklist", ["Must avoid drupal_set_message()", "Must work on Drupal 11"])
+    tc.metadata = {"checklist": ["Must avoid drupal_set_message()", "Must work on Drupal 11"]}
 
     metric = DeepEvalBugFixingMetric(judge=MockBugJudge(), model="mock", threshold=0.5)
 
@@ -133,14 +131,13 @@ This will work in Drupal 11.
 
     tc = LLMTestCase(input="Fix deprecated API usage", actual_output=fix_output, expected_output="")
 
-    setattr(
-        tc,
-        "checklist",
-        [
+    # Add checklist via metadata (DeepEval ≥3.4 made LLMTestCase strict pydantic)
+    tc.metadata = {
+        "checklist": [
             "Must avoid drupal_set_message()",  # This will pass
             "Should mention proper service usage",  # This will fail (no DI mentioned)
-        ],
-    )
+        ]
+    }
 
     metric = DeepEvalBugFixingMetric(judge=MockBugJudge(), model="mock", threshold=0.4)
 
@@ -157,7 +154,7 @@ def test_bug_fixing_metric_judge_response():
         actual_output="Use \\Drupal::messenger()->addMessage() for better compatibility",
         expected_output="",
     )
-    setattr(tc, "checklist", ["Uses modern API"])
+    tc.metadata = {"checklist": ["Uses modern API"]}
 
     metric = DeepEvalBugFixingMetric(judge=MockBugJudge(), model="mock")
     metric.measure(tc)

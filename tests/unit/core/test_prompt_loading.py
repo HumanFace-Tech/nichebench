@@ -1,7 +1,8 @@
 from pathlib import Path
 
-from nichebench.core.executor import TestExecutor
 from nichebench.core.prompt_loader import load_prompt_text
+from nichebench.execution.orchestrator import TestExecutor
+from nichebench.execution.runtime.opencode_config import PROMPTS_PATH
 from nichebench.frameworks.drupal.prompts.BUG_FIXING import BUG_FIXING_SYSTEM_PROMPT
 from nichebench.frameworks.drupal.prompts.CODE_AGENT import (
     CODE_AGENT_PLANNER_REQUEST_TEMPLATE,
@@ -41,7 +42,7 @@ def test_write_cage_opencode_json_uses_yaml_prompt(tmp_path: Path) -> None:
         opencode_model_id="gemma2-9b-it",
     )
     expected = load_prompt_text(
-        Path(__file__).resolve().parents[3] / "src" / "nichebench" / "core" / "prompts" / "executor.yaml",
+        PROMPTS_PATH,
         "cage_opencode_prompt",
         default="",
     )

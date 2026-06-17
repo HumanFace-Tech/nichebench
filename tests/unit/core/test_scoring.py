@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from nichebench.core.scoring import CheckResult, RuntimeScorer
+from nichebench.execution.runtime.scoring import CheckResult, RuntimeScorer
 
 
 @pytest.fixture()
@@ -80,3 +80,30 @@ class TestComputeHybridScore:
         )
         expected = 0.75 * 0.5 + 0.8 * 0.5  # = 0.775
         assert result.final_score == pytest.approx(expected)
+
+
+class TestRequiredCommandMatching:
+    def test_run_log_fallback_matches_actual_bash_command(self, tmp_path: Path) -> None:
+        run_log = tmp_path / "run.log"
+        run_log.write_text(
+            "STDOUT:\n\x1b[0m$ \x1b[0mUSER=app ddev drush cex --yes 2>&1 | tail -1\n../config/sync\n",
+            encoding="utf-8",
+        )
+        scorer = RuntimeScorer(workspace_path=tmp_path, run_log_path=run_log)
+
+        [result] = scorer.run_deterministic_checks(
+            [{"name": "cex", "type": "required_command", "command": "*ddev drush cex --yes*"}]
+        )
+
+        assert result.passed is True
+
+    def test_run_log_fallback_ignores_assistant_summaries(self, tmp_path: Path) -> None:
+        run_log = tmp_path / "run.log"
+        run_log.write_text("STDOUT:\n- Ran: ddev drush cex --yes\n", encoding="utf-8")
+        scorer = RuntimeScorer(workspace_path=tmp_path, run_log_path=run_log)
+
+        [result] = scorer.run_deterministic_checks(
+            [{"name": "cex", "type": "required_command", "command": "*ddev drush cex --yes*"}]
+        )
+
+        assert result.passed is False

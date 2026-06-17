@@ -64,6 +64,15 @@ class NicheBenchConfig:
                 "runtime_tool_allowlist_enforce": False,
                 "runtime_tool_retry_attempts": 3,
                 "runtime_judge_samples": 1,
+                "runtime_enable_diagnostics": True,
+                "runtime_watchdog_enable": True,
+                "runtime_watchdog_poll_seconds": 5,
+                "runtime_watchdog_stop_idle_seconds": 240,
+                "runtime_watchdog_inactivity_seconds": 600,
+                "runtime_smoke_preflight_enabled": False,
+                "runtime_smoke_preflight_timeout_seconds": 180,
+                "runtime_hints_enabled": False,
+                "runtime_hints_file": None,
             },
             "network": {"timeout": 600, "retry_attempts": 5, "retry_delay": 3.0},
             "results": {"auto_report": True, "save_format": "jsonl", "timestamp_format": "%Y%m%d_%H%M%S"},
@@ -133,9 +142,20 @@ class NicheBenchConfig:
 
         return config
 
-    def get_evaluation_config(self) -> Dict[str, Any]:
-        """Get evaluation settings."""
-        return self._config["evaluation"].copy()
+    def get_evaluation_config(self, profile: Optional[str] = None) -> Dict[str, Any]:
+        """Get evaluation settings, optionally merged with a profile's evaluation block.
+
+        Profile ``evaluation`` keys are deep-merged on top of the top-level
+        evaluation config so a profile can override fields like
+        ``runtime_opencode_api_base`` or ``runtime_opencode_model_limits``
+        for that specific run.
+        """
+        config = self._config["evaluation"].copy()
+        if profile and "profiles" in self._config and profile in self._config["profiles"]:
+            profile_eval = self._config["profiles"][profile].get("evaluation")
+            if isinstance(profile_eval, dict):
+                config = self._deep_merge(config, profile_eval)
+        return config
 
     def get_network_config(self) -> Dict[str, Any]:
         """Get network settings."""

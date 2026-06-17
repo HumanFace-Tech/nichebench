@@ -1,0 +1,3 @@
+# Shellcheck configuration for wrapper scripts.
+# SC1090: "Can't follow non-constant source" — we use importlib.resources, not direct sourcing
+disable=SC1090

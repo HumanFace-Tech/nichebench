@@ -10,13 +10,13 @@ packages = [{include = "nichebench", from = "src"}]
 nichebench = "nichebench.cli.app:main"
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = ">=3.10,<3.14"
 typer = "^0.16.0"
 rich = "^14.1.0"
 pyyaml = "^6.0.2"
 python-dotenv = "^1.1.1"
 deepeval = "^3.3.9"
-litellm = ">=1.75.8,<1.82.6"
+litellm = ">=1.89.1,<1.90"
 pandas = "^2.3.1"
 pyarrow = "^21.0.0"
 langchain = "^0.3.27"
@@ -42,7 +42,7 @@ line-length = 120
 extend-exclude = ["src/nichebench/frameworks/*/data"]
 
 [tool.ruff.lint]
-extend-select = ["E", "F", "W", "I"]
+extend-select = ["E", "F", "W", "I", "PIE", "FURB", "RET", "SIM", "ERA"]
 
 [tool.ruff.lint.per-file-ignores]
 # Allow long literal prompt strings in framework prompt modules

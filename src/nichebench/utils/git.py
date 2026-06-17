@@ -5,8 +5,6 @@ from pathlib import Path
 class GitError(Exception):
     """Exception raised for git operation errors."""
 
-    pass
-
 
 def resolve_branch_to_sha(branch_name: str, repo_path: Path) -> str:
     """Resolve a branch name to its current commit SHA."""

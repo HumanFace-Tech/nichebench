@@ -10,9 +10,9 @@ import yaml
 
 from nichebench.config.nichebench_config import NicheBenchConfig
 from nichebench.core.datamodel import TestCaseSpec
-from nichebench.core.executor import TestExecutor
 from nichebench.core.profiles import resolve_profile
-from nichebench.core.validation import ValidationError
+from nichebench.execution.orchestrator import TestExecutor
+from nichebench.execution.runtime.scoring import ValidationError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -29,24 +29,25 @@ def _make_executor(runtime_config=None, category="runtime"):
     mut_cfg = {"provider": "groq", "model": "test-model", "parameters": {}}
     judge_cfg = {"provider": "openai", "model": "gpt-5", "parameters": {}}
     network_cfg = {"timeout": 30, "retry_attempts": 1, "retry_delay": 1}
-    eval_cfg = runtime_config or {}
+    # Default watchdog off so command-construction tests keep using subprocess.run path.
+    base_cfg = {"runtime_watchdog_enable": False}
+    eval_cfg = {**base_cfg, **(runtime_config or {})}
 
     with (
-        patch("nichebench.core.executor.get_config") as mock_config,
+        patch("nichebench.execution.orchestrator.get_config") as mock_config,
         patch.object(TestExecutor, "_load_system_prompt", return_value=None),
         patch.object(TestExecutor, "_load_judge_system_prompt", return_value=None),
     ):
         mock_config.return_value.get_evaluation_config.return_value = eval_cfg
         mock_config.return_value.get_mut_config.return_value = mut_cfg
         mock_config.return_value.get_model_string.side_effect = lambda cfg: (f"{cfg['provider']}/{cfg['model']}")
-        executor = TestExecutor(
+        return TestExecutor(
             framework="drupal_runtime",
             category=category,
             mut_config=mut_cfg,
             judge_config=judge_cfg,
             network_config=network_cfg,
         )
-    return executor
 
 
 class TestRuntimeRouting:
@@ -66,6 +67,48 @@ class TestRuntimeRouting:
         mock_runtime.assert_called_once_with(test_case, trial=0)
         mock_mut.assert_not_called()
         mock_judge.assert_not_called()
+
+
+class TestRuntimeHints:
+    def test_hints_disabled_noops(self, tmp_path: Path) -> None:
+        executor = _make_executor({"runtime_hints_enabled": False})
+        task = TestCaseSpec(
+            id="drupal_runtime_001",
+            type="runtime",
+            raw={},
+            file_path=str(tmp_path / "tasks" / "manifest" / "drupal_runtime_001.yaml"),
+        )
+        (tmp_path / "TASK.md").write_text("Task body\n", encoding="utf-8")
+
+        assert executor._inject_runtime_hints(tmp_path, task) is None
+        assert (tmp_path / "TASK.md").read_text(encoding="utf-8") == "Task body\n"
+
+    def test_hints_enabled_copies_global_hints_file(self, tmp_path: Path) -> None:
+        executor = _make_executor({"runtime_hints_enabled": True})
+        manifest = tmp_path / "tasks" / "manifest" / "drupal_runtime_001.yaml"
+        hints = tmp_path / "tasks" / "HINTS.md"
+        hints.parent.mkdir(parents=True)
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text("task_id: drupal_runtime_001\n", encoding="utf-8")
+        hints.write_text("Use the correct Drupal APIs.\n", encoding="utf-8")
+        task = TestCaseSpec(id="drupal_runtime_001", type="runtime", raw={}, file_path=str(manifest))
+        (tmp_path / "TASK.md").write_text("Task body\n", encoding="utf-8")
+
+        used_path = executor._inject_runtime_hints(tmp_path, task)
+
+        assert used_path == hints
+        assert (tmp_path / "TASK.md").read_text(encoding="utf-8") == "Task body\n"
+        assert (tmp_path / "HINTS.md").read_text(encoding="utf-8") == "Use the correct Drupal APIs.\n"
+
+    def test_hints_enabled_missing_file_raises(self, tmp_path: Path) -> None:
+        executor = _make_executor({"runtime_hints_enabled": True})
+        manifest = tmp_path / "tasks" / "manifest" / "drupal_runtime_001.yaml"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text("task_id: drupal_runtime_001\n", encoding="utf-8")
+        task = TestCaseSpec(id="drupal_runtime_001", type="runtime", raw={}, file_path=str(manifest))
+
+        with pytest.raises(ValidationError, match="no hints file found"):
+            executor._inject_runtime_hints(tmp_path, task)
 
     def test_execute_test_non_runtime_uses_mut_and_judge(self):
         executor = _make_executor({}, category="quiz")
@@ -406,7 +449,7 @@ class TestCageStartupContract:
         workspace.path = tmp_path
         profile = resolve_profile("offline_cli")
 
-        with patch("nichebench.core.executor.subprocess.run") as mock_run:
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = executor._run_container_runtime_task(
                 test_case=test_case,
@@ -480,7 +523,7 @@ class TestCageStartupContract:
         workspace.path = tmp_path
         profile = resolve_profile("offline_cli")
 
-        with patch("nichebench.core.executor.subprocess.run") as mock_run:
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = executor._run_container_runtime_task(
                 test_case=test_case,
@@ -521,7 +564,7 @@ class TestCageStartupContract:
         workspace.run_artifacts_path = tmp_path / "results" / "run"
         profile = resolve_profile("offline_cli")
 
-        with patch("nichebench.core.executor.subprocess.run") as mock_run:
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = executor._run_container_runtime_task(
                 test_case=test_case,
@@ -562,7 +605,7 @@ class TestCageStartupContract:
         workspace.run_artifacts_path = tmp_path / "results" / "run"
         profile = resolve_profile("offline_cli")
 
-        with patch("nichebench.core.executor.subprocess.run") as mock_run:
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = executor._run_container_runtime_task(
                 test_case=test_case,
@@ -596,7 +639,7 @@ class TestCageStartupContract:
         workspace.run_artifacts_path = Path("artifacts/run")
         profile = resolve_profile("offline_cli")
 
-        with patch("nichebench.core.executor.subprocess.run") as mock_run:
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = executor._run_container_runtime_task(
                 test_case=test_case,
@@ -615,12 +658,13 @@ class TestCageStartupContract:
         workspace_abs = str((tmp_path / "workspaces" / "run-test").resolve())
         output_abs = str((tmp_path / "artifacts" / "run").resolve())
 
-        assert f"{workspace_abs}:/workspace" in mount_values
+        assert f"{workspace_abs}:{workspace_abs}" in mount_values
         assert f"{workspace_abs}:/nichebench/islands/input:ro" in mount_values
         assert f"{output_abs}:/nichebench/islands/output-trace" in mount_values
 
         workdir_idx = command.index("-w")
-        assert command[workdir_idx + 1] == "/workspace"
+        assert command[workdir_idx + 1] == workspace_abs
+        assert command[workdir_idx + 1] != "/workspace"
 
 
 # ---------------------------------------------------------------------------
@@ -658,7 +702,7 @@ class TestCageModeDDEVImageFlow:
         assert eval_conf["runtime_container_enable_ddev"] is False
         assert eval_conf["runtime_container_ddev_auto_build"] is False
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_resolve_effective_cage_image_already_has_ddev(self, mock_run, tmp_path):
         """Base image with ddev/docker binaries is returned as-is."""
         executor = _make_executor(
@@ -686,7 +730,7 @@ class TestCageModeDDEVImageFlow:
         entrypoint_idx = probe_call[0][0].index("--entrypoint")
         assert probe_call[0][0][entrypoint_idx + 1] == "sh"
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_resolve_effective_cage_image_missing_auto_build_enabled(self, mock_run, tmp_path):
         """Missing binaries with auto_build enabled builds derived image."""
         executor = _make_executor(
@@ -710,13 +754,13 @@ class TestCageModeDDEVImageFlow:
             if call_count[0] == 1 and "docker run" in cmd_str and "ghcr.io/opencode-ai/opencode:v0.14.0" in cmd_str:
                 return MagicMock(returncode=1, stdout="", stderr="")
             # Build call (succeeds)
-            elif call_count[0] == 2 and "docker build" in cmd_str:
+            if (
+                call_count[0] == 2
+                and "docker build" in cmd_str
+                or (call_count[0] == 3 and "docker run" in cmd_str and "nichebench/opencode-ddev:1.14.25" in cmd_str)
+            ):
                 return MagicMock(returncode=0, stdout="", stderr="")
-            # Second probe on derived image (succeeds)
-            elif call_count[0] == 3 and "docker run" in cmd_str and "nichebench/opencode-ddev:1.14.25" in cmd_str:
-                return MagicMock(returncode=0, stdout="", stderr="")
-            else:
-                return MagicMock(returncode=0, stdout="", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = mock_side_effect
 
@@ -727,7 +771,7 @@ class TestCageModeDDEVImageFlow:
         # Verify probe, build, probe sequence
         assert mock_run.call_count >= 2
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_resolve_effective_cage_image_missing_auto_build_disabled(self, mock_run, tmp_path):
         """Missing binaries with auto_build disabled raises ValidationError."""
         executor = _make_executor(
@@ -745,7 +789,7 @@ class TestCageModeDDEVImageFlow:
         with pytest.raises(ValidationError, match="lacks required ddev/docker/git binaries or ddev drush support"):
             executor._resolve_effective_cage_image(executor.evaluation_config)
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_resolve_effective_cage_image_ddev_disabled_returns_base(self, mock_run, tmp_path):
         """When DDEV is disabled, returns base image without probing."""
         executor = _make_executor(
@@ -764,7 +808,7 @@ class TestCageModeDDEVImageFlow:
         assert effective_image == "ghcr.io/opencode-ai/opencode:v0.14.0"
         assert not mock_run.called
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_resolve_effective_cage_image_build_fails_raises(self, mock_run, tmp_path):
         """Build failure raises ValidationError."""
         executor = _make_executor(
@@ -787,10 +831,9 @@ class TestCageModeDDEVImageFlow:
             if call_count[0] == 1 and "docker run" in cmd_str:
                 return MagicMock(returncode=1, stdout="", stderr="")
             # Build call fails
-            elif call_count[0] == 2 and "docker build" in cmd_str:
+            if call_count[0] == 2 and "docker build" in cmd_str:
                 raise subprocess.CalledProcessError(1, "docker build", stderr="Build failed")
-            else:
-                return MagicMock(returncode=0, stdout="", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = mock_side_effect
 
@@ -834,7 +877,7 @@ class TestCageModeDDEVImageFlow:
         assert "runtime_container_image_effective" in meta
         assert meta["runtime_container_image_effective"] == "base-image"
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_cage_runtime_command_uses_effective_image(self, mock_run, tmp_path):
         """Cage runtime command uses effective image when DDEV enabled."""
         executor = _make_executor(
@@ -880,7 +923,7 @@ class TestCageModeDDEVImageFlow:
         image_idx = docker_cmd.index("effective-image")
         assert docker_cmd[image_idx + 1] == "run"
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_metadata_host_mode_uses_base_image_only(self, tmp_path):
         """Host mode metadata only includes base image (no effective)."""
         executor = _make_executor(
@@ -995,7 +1038,7 @@ class TestCageModeDDEVImageFlow:
         assert "runtime_container_image_effective" in meta
         assert meta["runtime_container_image_effective"] == "ghcr.io/opencode-ai/opencode:v0.14.0"
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_probe_command_forces_shell_entrypoint(self, mock_run, tmp_path):
         """Probe command uses --entrypoint sh to force shell entrypoint."""
         executor = _make_executor(
@@ -1015,7 +1058,7 @@ class TestCageModeDDEVImageFlow:
         # Verify probe command format
         assert mock_run.called
         probe_cmd = mock_run.call_args.args[0]
-        # Command should include ddev/docker/git + ddev drush support probe.
+        # Command should check for required binaries only (no || true false-positive).
         assert probe_cmd[0] == "docker"
         assert probe_cmd[1] == "run"
         assert "--rm" in probe_cmd
@@ -1027,10 +1070,10 @@ class TestCageModeDDEVImageFlow:
         assert "command -v ddev" in probe_cmd[cmd_idx + 1]
         assert "command -v docker" in probe_cmd[cmd_idx + 1]
         assert "command -v git" in probe_cmd[cmd_idx + 1]
-        assert "ddev drush --help" in probe_cmd[cmd_idx + 1]
-        assert "drush" in probe_cmd[cmd_idx + 1]
+        # ddev drush probe removed: the || true pattern was a false positive
+        assert "|| true" not in probe_cmd[cmd_idx + 1]
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_cage_runtime_command_uses_explicit_opencode_entrypoint(self, mock_run, tmp_path):
         """Cage runtime command sets --entrypoint opencode and no duplicated positional."""
         executor = _make_executor(
@@ -1094,7 +1137,7 @@ class TestCageModeDDEVImageFlow:
         workspace.path = tmp_path
         profile = resolve_profile("offline_cli")
 
-        with patch("nichebench.core.executor.subprocess.run") as mock_run:
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = executor._run_container_runtime_task(
                 test_case=test_case,
@@ -1138,7 +1181,7 @@ class TestCageModeDDEVImageFlow:
         task_md_content = "# TASK\n\nUse this file content."
         (tmp_path / "TASK.md").write_text(task_md_content, encoding="utf-8")
 
-        with patch("nichebench.core.executor.subprocess.run") as mock_run:
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = executor._run_container_runtime_task(
                 test_case=test_case,
@@ -1169,7 +1212,7 @@ class TestCageModeDDEVImageFlow:
 
         (tmp_path / "TASK.md").write_text(" \n\n ", encoding="utf-8")
 
-        with patch("nichebench.core.executor.subprocess.run") as mock_run:
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = executor._run_container_runtime_task(
                 test_case=test_case,
@@ -1193,7 +1236,7 @@ class TestCageModeDDEVImageFlow:
 class TestCageModeTrajectoryCapture:
     """Test cage mode trajectory capture from SQLite database."""
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_cage_returns_trajectory_when_sqlite_exists(self, mock_run, tmp_path):
         """Cage mode returns trajectory when SQLite database exists with session data."""
         executor = _make_executor(
@@ -1210,7 +1253,7 @@ class TestCageModeTrajectoryCapture:
         # Mock subprocess run to return success
         mock_run.return_value = MagicMock(returncode=0, stdout="output", stderr="")
 
-        with patch("nichebench.core.executor.TestExecutor._build_trajectory_from_sqlite") as mock_build_traj:
+        with patch("nichebench.execution.orchestrator.TestExecutor._build_trajectory_from_sqlite") as mock_build_traj:
             mock_build_traj.return_value = {
                 "instance_id": "test_001",
                 "model": "groq/test-model",
@@ -1251,7 +1294,7 @@ class TestCageModeTrajectoryCapture:
             assert "end_time" in call_kwargs
             assert "system_prompt" in call_kwargs
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_cage_returns_none_trajectory_when_sqlite_missing(self, mock_run, tmp_path):
         """Cage mode returns None trajectory when SQLite database is missing."""
         executor = _make_executor(
@@ -1268,7 +1311,7 @@ class TestCageModeTrajectoryCapture:
         # Mock subprocess run to return success
         mock_run.return_value = MagicMock(returncode=0, stdout="output", stderr="")
 
-        with patch("nichebench.core.executor.TestExecutor._build_trajectory_from_sqlite") as mock_build_traj:
+        with patch("nichebench.execution.orchestrator.TestExecutor._build_trajectory_from_sqlite") as mock_build_traj:
             mock_build_traj.return_value = None
 
             result = executor._run_container_runtime_task(
@@ -1285,7 +1328,7 @@ class TestCageModeTrajectoryCapture:
             mut_output, user_input, run_log, island_topology, effective_image, trajectory = result
             assert trajectory is None
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_cage_trajectory_capture_is_best_effort(self, mock_run, tmp_path):
         """Trajectory capture errors do not crash the cage run."""
         executor = _make_executor(
@@ -1302,7 +1345,7 @@ class TestCageModeTrajectoryCapture:
         # Mock subprocess run to return success
         mock_run.return_value = MagicMock(returncode=0, stdout="output", stderr="")
 
-        with patch("nichebench.core.executor.TestExecutor._build_trajectory_from_sqlite") as mock_build_traj:
+        with patch("nichebench.execution.orchestrator.TestExecutor._build_trajectory_from_sqlite") as mock_build_traj:
             mock_build_traj.side_effect = Exception("DB error")
 
             result = executor._run_container_runtime_task(
@@ -1389,12 +1432,12 @@ class TestCageModeTrajectoryCapture:
                 patch.object(executor, "_run_runtime_preflight_workspace", return_value=[]),
                 patch.object(executor, "_inject_task_markdown"),
                 patch.object(executor, "_load_runtime_checks", return_value=[]),
-                patch("nichebench.core.executor.Workspace") as MockWorkspace,
-                patch("nichebench.core.executor.validate_runtime_testcase") as mock_validate,
-                patch("nichebench.core.executor.RuntimeScorer") as MockScorer,
-                patch("nichebench.core.executor.JudgeRunner") as MockJudge,
-                patch("nichebench.core.executor.find_git_root") as mock_git_root,
-                patch("nichebench.core.executor.resolve_branch_to_sha") as mock_resolve_sha,
+                patch("nichebench.execution.orchestrator.Workspace") as MockWorkspace,
+                patch("nichebench.execution.orchestrator.validate_runtime_testcase") as mock_validate,
+                patch("nichebench.execution.orchestrator.RuntimeScorer") as MockScorer,
+                patch("nichebench.execution.orchestrator.JudgeRunner") as MockJudge,
+                patch("nichebench.execution.orchestrator.find_git_root") as mock_git_root,
+                patch("nichebench.execution.orchestrator.resolve_branch_to_sha") as mock_resolve_sha,
             ):
                 mock_validate.return_value = None  # pass validation
                 mock_git_root.return_value = tmp_path  # fake git root
@@ -1438,7 +1481,7 @@ class TestCageModeTrajectoryCapture:
         assert "trajectory.json" in result.runtime_artifacts
         assert result.runtime_artifacts["trajectory.json"] == trajectory_data
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_cage_branch_skips_trajectory_when_none(self, mock_run, tmp_path):
         """Cage branch does not store trajectory when it is None."""
         executor = _make_executor(
@@ -1454,7 +1497,7 @@ class TestCageModeTrajectoryCapture:
         # Mock subprocess run to return success
         mock_run.return_value = MagicMock(returncode=0, stdout="output", stderr="")
 
-        with patch("nichebench.core.executor.TestExecutor._build_trajectory_from_sqlite") as mock_build_traj:
+        with patch("nichebench.execution.orchestrator.TestExecutor._build_trajectory_from_sqlite") as mock_build_traj:
             mock_build_traj.return_value = None
 
             # Mock other dependencies to simplify test
@@ -1483,7 +1526,7 @@ class TestCageRuntimeModelConfiguration:
         OpenCode 1.14.25 accepts groq/openai/gpt-oss-120b and routes correctly;
         stripping to gpt-oss-120b would cause 'model does not exist' errors.
         """
-        from nichebench.core.executor import TestExecutor
+        from nichebench.execution.orchestrator import TestExecutor
 
         runtime_config = {}
 
@@ -1525,7 +1568,7 @@ class TestCageRuntimeModelConfiguration:
 
     def test_compute_opencode_model_binding_override(self):
         """runtime_opencode_model override takes precedence."""
-        from nichebench.core.executor import TestExecutor
+        from nichebench.execution.orchestrator import TestExecutor
 
         runtime_config = {"runtime_opencode_model": "openai/gpt-4o-mini"}
 
@@ -1539,7 +1582,7 @@ class TestCageRuntimeModelConfiguration:
 
     def test_compute_opencode_model_binding_override_without_provider(self):
         """Override without provider uses MUT provider."""
-        from nichebench.core.executor import TestExecutor
+        from nichebench.execution.orchestrator import TestExecutor
 
         runtime_config = {"runtime_opencode_model": "custom-model-123"}
 
@@ -1553,7 +1596,7 @@ class TestCageRuntimeModelConfiguration:
 
     def test_get_provider_api_keys(self, monkeypatch):
         """Provider API keys are extracted from host environment."""
-        from nichebench.core.executor import TestExecutor
+        from nichebench.execution.orchestrator import TestExecutor
 
         # Mock environment variables
         monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
@@ -1587,7 +1630,7 @@ class TestCageRuntimeModelConfiguration:
         workspace.path = tmp_path
         profile = resolve_profile("offline_cli")
 
-        with patch("nichebench.core.executor.subprocess.run") as mock_run:
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = executor._run_container_runtime_task(
                 test_case=test_case,
@@ -1622,7 +1665,7 @@ class TestCageRuntimeModelConfiguration:
         workspace.path = tmp_path
         profile = resolve_profile("offline_cli")
 
-        with patch("nichebench.core.executor.subprocess.run") as mock_run:
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = executor._run_container_runtime_task(
                 test_case=test_case,
@@ -1686,7 +1729,7 @@ class TestCageRuntimeModelConfiguration:
         workspace.path = tmp_path
         profile = resolve_profile("offline_cli")
 
-        with patch("nichebench.core.executor.subprocess.run") as mock_run:
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = executor._run_container_runtime_task(
                 test_case=test_case,
@@ -1743,7 +1786,7 @@ class TestCageRuntimeModelConfiguration:
         assert "opencode_model_id" in meta
         assert meta["opencode_model_id"] == "test-model"
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     @patch("os.stat")
     def test_cage_launch_adds_docker_socket_group_access(self, mock_stat, mock_run, tmp_path):
         """When docker socket exists, --group-add is added with socket group id."""
@@ -1783,7 +1826,7 @@ class TestCageRuntimeModelConfiguration:
         # Verify os.stat was called with the docker socket path (among other calls)
         mock_stat.assert_any_call("/var/run/docker.sock")
 
-    @patch("nichebench.core.executor.subprocess.run")
+    @patch("nichebench.execution.orchestrator.subprocess.run")
     @patch("os.stat")
     def test_cage_launch_handles_stat_failure_gracefully(self, mock_stat, mock_run, tmp_path):
         """When os.stat fails, command is built without --group-add (best effort)."""
@@ -2239,6 +2282,87 @@ class TestContainerRuntimeTaskWithRetry:
         assert retry_info["attempted"] is True
         assert retry_info["reason"] == "json_parse_failure"
 
+    @patch.object(TestExecutor, "_run_container_runtime_task")
+    def test_retry_triggers_when_first_run_raises_with_rejected_tool(self, mock_task, tmp_path):
+        """First run raises RuntimeError; the captured run.log is replayed and retry triggers.
+
+        Production path: OpenCode exits non-zero (or watchdog trips), the cage writes
+        run.log to the output trace island, then raises RuntimeError.  The retry
+        wrapper must catch that error, read the captured log, and still allow the
+        retry decision to inspect it for invalid_request_error.
+        """
+        executor = _make_executor(
+            {
+                "runtime_mode": "cage",
+                "runtime_container_image": "ghcr.io/opencode-ai/opencode:v0.14.0",
+            }
+        )
+        test_case = TestCaseSpec(id="test_009", type="runtime", raw={}, prompt="Task")
+
+        # Create a real run.log on disk to simulate the cage's output trace island.
+        run_artifacts = tmp_path / "results" / "run"
+        run_artifacts.mkdir(parents=True)
+        first_log = "STDERR:\nattempted to call tool 'exec' which was not in request.tools\n" "invalid_request_error"
+        (run_artifacts / "run.log").write_text(first_log, encoding="utf-8")
+
+        workspace = MagicMock()
+        workspace.path = tmp_path
+        workspace.run_artifacts_path = str(run_artifacts)
+
+        # First call raises (non-zero exit), second call succeeds.
+        second_log = "STDOUT:\nretry succeeded"
+        mock_task.side_effect = [
+            RuntimeError("Container OpenCode command failed with exit 1"),
+            ("output2", "input2", second_log, {}, "image", {"messages": []}),
+        ]
+
+        result = executor._run_container_runtime_task_with_retry(
+            test_case=test_case,
+            workspace=workspace,
+            agent_manifest={},
+            runtime_config=executor.evaluation_config,
+            profile=resolve_profile("offline_cli"),
+            timeout_seconds=30,
+        )
+
+        assert mock_task.call_count == 2
+        retry_info = result[-1]
+        assert retry_info is not None
+        assert retry_info["attempted"] is True
+
+    @patch.object(TestExecutor, "_run_container_runtime_task")
+    def test_first_run_raises_without_retry_trigger_propagates(self, mock_task, tmp_path):
+        """If the first run raises and run.log has no retry trigger, the error propagates."""
+        executor = _make_executor(
+            {
+                "runtime_mode": "cage",
+                "runtime_container_image": "ghcr.io/opencode-ai/opencode:v0.14.0",
+            }
+        )
+        test_case = TestCaseSpec(id="test_010", type="runtime", raw={}, prompt="Task")
+
+        run_artifacts = tmp_path / "results" / "run"
+        run_artifacts.mkdir(parents=True)
+        (run_artifacts / "run.log").write_text("STDERR:\nsome unrelated failure\n", encoding="utf-8")
+
+        workspace = MagicMock()
+        workspace.path = tmp_path
+        workspace.run_artifacts_path = str(run_artifacts)
+
+        mock_task.side_effect = RuntimeError("Container OpenCode command failed with exit 1")
+
+        with pytest.raises(RuntimeError, match="exit 1"):
+            executor._run_container_runtime_task_with_retry(
+                test_case=test_case,
+                workspace=workspace,
+                agent_manifest={},
+                runtime_config=executor.evaluation_config,
+                profile=resolve_profile("offline_cli"),
+                timeout_seconds=30,
+            )
+
+        assert mock_task.call_count == 1
+
 
 # ---------------------------------------------------------------------------
 # CLI --model override suppresses runtime_opencode_model config
@@ -2288,7 +2412,7 @@ class TestCliModelOverride:
         network_cfg = {"timeout": 30, "retry_attempts": 1, "retry_delay": 1}
 
         with (
-            patch("nichebench.core.executor.get_config") as mock_config,
+            patch("nichebench.execution.orchestrator.get_config") as mock_config,
             patch.object(TestExecutor, "_load_system_prompt", return_value=None),
             patch.object(TestExecutor, "_load_judge_system_prompt", return_value=None),
         ):
@@ -2312,7 +2436,7 @@ class TestCliModelOverride:
         network_cfg = {"timeout": 30, "retry_attempts": 1, "retry_delay": 1}
 
         with (
-            patch("nichebench.core.executor.get_config") as mock_config,
+            patch("nichebench.execution.orchestrator.get_config") as mock_config,
             patch.object(TestExecutor, "_load_system_prompt", return_value=None),
             patch.object(TestExecutor, "_load_judge_system_prompt", return_value=None),
         ):
@@ -2327,3 +2451,652 @@ class TestCliModelOverride:
             )
 
         assert executor._cli_model_override is None
+
+
+# ---------------------------------------------------------------------------
+# opencode.json config-driven generation
+# ---------------------------------------------------------------------------
+
+
+class TestCageOpenCodeJsonGeneration:
+    """Tests for _write_cage_opencode_json with config-driven generation."""
+
+    def test_native_provider_backward_compat(self, tmp_path):
+        """Without api_base or runtime_config, generates simple native provider block."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="groq",
+            opencode_model_id="gemma2-9b-it",
+        )
+        assert result.exists()
+        cfg = json.loads(result.read_text())
+        assert cfg["model"] == "groq/gemma2-9b-it"
+        assert cfg["small_model"] == "groq/gemma2-9b-it"
+        provider = cfg["provider"]["groq"]
+        assert provider == {"models": {"gemma2-9b-it": {}}}
+        assert "autoshorten" not in cfg
+
+    def test_api_base_generates_npm_block(self, tmp_path):
+        """With api_base, generates @ai-sdk/openai-compatible npm provider block."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="groq",
+            opencode_model_id="llama-3.3-70b",
+            api_base="http://localhost:8080/v1",
+            runtime_config={},
+        )
+        cfg = json.loads(result.read_text())
+        assert cfg["model"] == "groq/llama-3.3-70b"
+        provider_block = cfg["provider"]["groq"]
+        assert provider_block["npm"] == "@ai-sdk/openai-compatible"
+        assert provider_block["options"]["baseURL"] == "http://localhost:8080/v1"
+        assert provider_block["name"] == "groq"
+        assert "api_key" not in provider_block
+        assert "fetch" not in provider_block["options"]
+        assert cfg["default_agent"] == "build"
+        assert cfg["permission"]["*"] == "deny"
+        assert cfg["permission"]["bash"] == "allow"
+        assert cfg["permission"]["question"] == "deny"
+        assert cfg["permission"]["task"] == "deny"
+
+    def test_output_limit_defaults_to_half_of_context(self, tmp_path):
+        """When context_limit set but no output_limit, output = 50% of context."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="groq",
+            opencode_model_id="my-model",
+            api_base="http://localhost:8080/v1",
+            runtime_config={"runtime_opencode_context_limit": 8192},
+        )
+        cfg = json.loads(result.read_text())
+        limit = cfg["provider"]["groq"]["models"]["my-model"]["limit"]
+        assert limit["context"] == 8192
+        assert limit["output"] == 4096
+
+    def test_explicit_output_limit(self, tmp_path):
+        """Explicit output_limit overrides ratio computation."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="openai",
+            opencode_model_id="my-model",
+            api_base="http://localhost:8080/v1",
+            runtime_config={
+                "runtime_opencode_context_limit": 8192,
+                "runtime_opencode_output_limit": 1024,
+            },
+        )
+        cfg = json.loads(result.read_text())
+        limit = cfg["provider"]["openai"]["models"]["my-model"]["limit"]
+        assert limit["context"] == 8192
+        assert limit["output"] == 1024
+
+    def test_custom_output_ratio(self, tmp_path):
+        """Custom ratio applies to context limit."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="openai",
+            opencode_model_id="my-model",
+            api_base="http://localhost:8080/v1",
+            runtime_config={
+                "runtime_opencode_context_limit": 10000,
+                "runtime_opencode_output_ratio": 0.25,
+            },
+        )
+        cfg = json.loads(result.read_text())
+        limit = cfg["provider"]["openai"]["models"]["my-model"]["limit"]
+        assert limit["output"] == 2500
+
+    def test_timeout_and_chunk_timeout(self, tmp_path):
+        """Timeout and chunk timeout appear in provider options."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="openai",
+            opencode_model_id="my-model",
+            api_base="http://localhost:8080/v1",
+            runtime_config={
+                "runtime_opencode_timeout_ms": 120000,
+                "runtime_opencode_chunk_timeout_ms": 60000,
+            },
+        )
+        cfg = json.loads(result.read_text())
+        opts = cfg["provider"]["openai"]["options"]
+        assert opts["timeout"] == 120000
+        assert opts["chunkTimeout"] == 60000
+
+    def test_set_cache_key(self, tmp_path):
+        """setCacheKey appears when runtime_opencode_set_cache_key is true."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="openai",
+            opencode_model_id="my-model",
+            api_base="http://localhost:8080/v1",
+            runtime_config={"runtime_opencode_set_cache_key": True},
+        )
+        cfg = json.loads(result.read_text())
+        assert cfg["provider"]["openai"]["options"]["setCacheKey"] is True
+
+    def test_custom_npm_package(self, tmp_path):
+        """Custom npm package overrides default @ai-sdk/openai-compatible."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="openai",
+            opencode_model_id="my-model",
+            api_base="http://localhost:8080/v1",
+            runtime_config={"runtime_opencode_provider_npm": "@my-org/my-sdk"},
+        )
+        cfg = json.loads(result.read_text())
+        assert cfg["provider"]["openai"]["npm"] == "@my-org/my-sdk"
+
+    def test_compaction_emitted(self, tmp_path):
+        """compaction block emitted when any compaction config key is set."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="groq",
+            opencode_model_id="my-model",
+            runtime_config={
+                "runtime_opencode_compaction_auto": True,
+                "runtime_opencode_compaction_prune": True,
+                "runtime_opencode_compaction_reserved": 1000,
+            },
+        )
+        cfg = json.loads(result.read_text())
+        assert "compaction" in cfg
+        assert cfg["compaction"]["auto"] is True
+        assert cfg["compaction"]["prune"] is True
+        assert cfg["compaction"]["reserved"] == 1000
+
+    def test_compaction_absent_when_not_configured(self, tmp_path):
+        """compaction block absent when no compaction config is set."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="groq",
+            opencode_model_id="my-model",
+        )
+        cfg = json.loads(result.read_text())
+        assert "compaction" not in cfg
+
+    def test_permission_block_is_explicit_allowlist(self, tmp_path):
+        """Generated opencode.json uses an explicit allowlist: deny-all then allow specific tools."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="groq",
+            opencode_model_id="my-model",
+        )
+        cfg = json.loads(result.read_text())
+        perm = cfg["permission"]
+
+        # Wildcard must be deny (not allow) so unknown tools are blocked by default
+        assert perm["*"] == "deny", f"Expected '*' to be 'deny', got {perm['*']!r}"
+
+        # Core coding tools must be explicitly allowed
+        for tool in ("bash", "read", "edit", "glob", "grep", "write", "list", "patch", "todowrite", "todoread"):
+            assert perm[tool] == "allow", f"Expected '{tool}' to be 'allow', got {perm.get(tool)!r}"
+
+        # Interactive / delegation / network tools must be denied:
+        # - question: no interactive prompts
+        # - task: no sub-agent spawning
+        # - skill: no loading external skills (cage is isolated)
+        # - webfetch/websearch: no internet access (cage is offline sandbox)
+        for tool in ("question", "task", "skill", "webfetch", "websearch"):
+            assert perm[tool] == "deny", f"Expected '{tool}' to be 'deny', got {perm.get(tool)!r}"
+
+    def test_external_directory_allowlist_includes_workspace(self, tmp_path):
+        """Cage opencode.json must allow the workspace path and standard temp/state dirs.
+
+        Without this, the MUT inside the cage gets deny-by-default on file access
+        and can't read/write the Drupal project it's supposed to be debugging.
+        """
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="groq",
+            opencode_model_id="my-model",
+        )
+        cfg = json.loads(result.read_text())
+        ext_dirs = cfg["permission"]["external_directory"]
+        assert ext_dirs[str(tmp_path)] == "allow", f"Workspace path {tmp_path} must be allowed, got {ext_dirs!r}"
+        # Temp and state dirs the MUT needs for opencode internals
+        for path in ("/tmp", "/tmp/opencode", "/nichebench/islands", "/nichebench/state"):
+            assert ext_dirs[path] == "allow", f"{path} must be allowed, got {ext_dirs!r}"
+
+    def test_native_provider_with_limits(self, tmp_path):
+        """Native provider without api_base can still carry model limits."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="groq",
+            opencode_model_id="my-model",
+            runtime_config={
+                "runtime_opencode_context_limit": 4096,
+                "runtime_opencode_output_limit": 512,
+            },
+        )
+        cfg = json.loads(result.read_text())
+        limit = cfg["provider"]["groq"]["models"]["my-model"]["limit"]
+        assert limit["context"] == 4096
+        assert limit["output"] == 512
+        # No npm block for native
+        assert "npm" not in cfg["provider"]["groq"]
+
+    def test_no_fetch_block_without_timeouts(self, tmp_path):
+        """No fetch block in options when no timeouts are configured."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="openai",
+            opencode_model_id="my-model",
+            api_base="http://localhost:8080/v1",
+            runtime_config={},
+        )
+        cfg = json.loads(result.read_text())
+        assert "fetch" not in cfg["provider"]["openai"]["options"]
+
+    def test_custom_provider_name_used_as_key(self, tmp_path):
+        """runtime_opencode_provider_name overrides the provider dict key and model binding."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="llama-cpp",
+            opencode_model_id="my-model",
+            api_base="http://localhost:8080/v1",
+            runtime_config={"runtime_opencode_provider_name": "my-local"},
+        )
+        cfg = json.loads(result.read_text())
+        assert "my-local" in cfg["provider"]
+        assert cfg["model"] == "my-local/my-model"
+        assert cfg["provider"]["my-local"]["name"] == "my-local"
+
+
+# ---------------------------------------------------------------------------
+# Provider key derivation and --model flag integration
+# ---------------------------------------------------------------------------
+
+
+class TestCageProviderKeyDerivation:
+    """Integration tests for provider key derivation in cage mode."""
+
+    def test_explicit_provider_name_in_model_flag(self, tmp_path):
+        """runtime_opencode_provider_name is used in --model flag when api_base is set."""
+        executor = _make_executor(
+            {
+                "runtime_mode": "cage",
+                "runtime_container_image": "ghcr.io/opencode-ai/opencode:v0.14.0",
+                "runtime_opencode_api_base": "http://localhost:8080",
+                "runtime_opencode_provider_name": "my-local",
+            }
+        )
+        test_case = TestCaseSpec(id="test_001", type="runtime", raw={}, prompt="Do task")
+        workspace = MagicMock()
+        workspace.path = tmp_path
+        profile = resolve_profile("offline_cli")
+
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            executor._run_container_runtime_task(
+                test_case=test_case,
+                workspace=workspace,
+                agent_manifest={},
+                runtime_config=executor.evaluation_config,
+                profile=profile,
+                timeout_seconds=30,
+            )
+
+        command = mock_run.call_args.args[0]
+        model_idx = command.index("--model")
+        assert command[model_idx + 1] == "my-local/test-model"
+
+        # opencode.json written to workspace also uses the derived key
+        opencode_cfg = json.loads((tmp_path / "opencode.json").read_text())
+        assert opencode_cfg["model"] == "my-local/test-model"
+        assert "my-local" in opencode_cfg["provider"]
+
+    def test_derived_key_sanitizes_provider_name(self, tmp_path):
+        """When no explicit name, provider key is sanitized from original provider."""
+        executor = _make_executor(
+            {
+                "runtime_mode": "cage",
+                "runtime_container_image": "ghcr.io/opencode-ai/opencode:v0.14.0",
+                "runtime_opencode_api_base": "http://localhost:8080",
+            }
+        )
+        # Override MUT provider to something with special chars
+        executor.mut_runner.model_config["provider"] = "my.provider"
+        test_case = TestCaseSpec(id="test_001", type="runtime", raw={}, prompt="Do task")
+        workspace = MagicMock()
+        workspace.path = tmp_path
+        profile = resolve_profile("offline_cli")
+
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            executor._run_container_runtime_task(
+                test_case=test_case,
+                workspace=workspace,
+                agent_manifest={},
+                runtime_config=executor.evaluation_config,
+                profile=profile,
+                timeout_seconds=30,
+            )
+
+        command = mock_run.call_args.args[0]
+        model_idx = command.index("--model")
+        # dots replaced with dashes in provider key
+        assert command[model_idx + 1] == "my-provider/test-model"
+
+    def test_native_without_api_base_uses_original_provider(self, tmp_path):
+        """Native provider without api_base uses original provider key unchanged."""
+        executor = _make_executor(
+            {
+                "runtime_mode": "cage",
+                "runtime_container_image": "ghcr.io/opencode-ai/opencode:v0.14.0",
+            }
+        )
+        test_case = TestCaseSpec(id="test_001", type="runtime", raw={}, prompt="Do task")
+        workspace = MagicMock()
+        workspace.path = tmp_path
+        profile = resolve_profile("offline_cli")
+
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            executor._run_container_runtime_task(
+                test_case=test_case,
+                workspace=workspace,
+                agent_manifest={},
+                runtime_config=executor.evaluation_config,
+                profile=profile,
+                timeout_seconds=30,
+            )
+
+        command = mock_run.call_args.args[0]
+        model_idx = command.index("--model")
+        assert command[model_idx + 1] == "groq/test-model"
+
+
+# ---------------------------------------------------------------------------
+# TestCatastrophicFailureDetection
+# ---------------------------------------------------------------------------
+
+
+class TestCatastrophicFailureDetection:
+    """Unit tests for TestExecutor._detect_catastrophic_failure."""
+
+    def test_detects_dh_is_not_a_function(self):
+        reason = TestExecutor._detect_catastrophic_failure(
+            mut_output="",
+            run_log="STDERR: DH is not a function\nTraceback...",
+            trajectory=None,
+        )
+        assert reason is not None
+        assert "dh is not a function" in reason.lower()
+
+    def test_detects_dh_is_not_a_function_case_insensitive(self):
+        reason = TestExecutor._detect_catastrophic_failure(
+            mut_output="",
+            run_log="some preamble\ndH Is Not A Function\n",
+            trajectory=None,
+        )
+        assert reason is not None
+
+    def test_detects_timeout_in_mut_output(self):
+        reason = TestExecutor._detect_catastrophic_failure(
+            mut_output="[Error: process timed out after 1800s]",
+            run_log="normal run log",
+            trajectory=None,
+        )
+        assert reason is not None
+        assert "timed out" in reason.lower()
+
+    def test_normal_run_returns_none(self):
+        reason = TestExecutor._detect_catastrophic_failure(
+            mut_output="I have completed the task successfully.",
+            run_log="build step-start tool_call step-finish",
+            trajectory={"messages": [{"tool_calls": [{"name": "bash"}]}]},
+        )
+        assert reason is None
+
+    def test_error_in_stderr_with_tool_activity_not_catastrophic(self):
+        # An error in STDERR is only catastrophic when combined with zero tool activity.
+        # If there ARE tool_calls in the trajectory, the agent did work — not a startup crash.
+        trajectory = {"messages": [{"tool_calls": [{"name": "bash"}]}]}
+        reason = TestExecutor._detect_catastrophic_failure(
+            mut_output="",
+            run_log="STDERR: Error: something went wrong",
+            trajectory=trajectory,
+        )
+        assert reason is None
+
+    def test_error_in_stderr_no_tool_activity_is_catastrophic(self):
+        trajectory = {"messages": [{"role": "assistant", "content": "hello"}]}
+        reason = TestExecutor._detect_catastrophic_failure(
+            mut_output="",
+            run_log="STDERR: Error: Cannot find module 'opencode'",
+            trajectory=trajectory,
+        )
+        assert reason is not None
+        assert "startup error" in reason.lower()
+
+    def test_error_in_stderr_no_trajectory_is_catastrophic(self):
+        reason = TestExecutor._detect_catastrophic_failure(
+            mut_output="",
+            run_log="STDERR: Error: Cannot find module 'opencode'",
+            trajectory=None,
+        )
+        assert reason is not None
+
+    def test_timeout_without_bracket_error_prefix_not_triggered(self):
+        # "timed out" without "[Error:" prefix should NOT trigger class 1.
+        reason = TestExecutor._detect_catastrophic_failure(
+            mut_output="the request timed out eventually",
+            run_log="normal log",
+            trajectory={"messages": [{"tool_calls": [{"name": "bash"}]}]},
+        )
+        assert reason is None
+
+
+# ---------------------------------------------------------------------------
+# Runtime smoke preflight integration
+# ---------------------------------------------------------------------------
+
+
+class TestSmokePreflight:
+    """Tests for runtime smoke preflight integration in workspace preflight hook."""
+
+    def test_disabled_does_not_invoke_subprocess(self, tmp_path):
+        """disabled flag -> smoke runner not invoked."""
+        executor = _make_executor({"runtime_smoke_preflight_enabled": False})
+
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
+            executor._run_runtime_preflight_workspace(tmp_path, "cage")
+
+        mock_run.assert_not_called()
+
+    def test_enabled_success_no_exception(self, tmp_path):
+        """enabled + success return -> no exception raised."""
+        executor = _make_executor({"runtime_smoke_preflight_enabled": True})
+
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
+            executor._run_runtime_preflight_workspace(tmp_path, "cage")
+
+        mock_run.assert_called_once()
+        call_cmd = mock_run.call_args[0][0]
+        assert "--json" in call_cmd
+        assert "--workspace" in call_cmd
+
+    def test_enabled_nonzero_json_raises_with_check_names(self, tmp_path):
+        """enabled + non-zero + json payload -> ValidationError contains failed check names."""
+        executor = _make_executor({"runtime_smoke_preflight_enabled": True})
+
+        json_output = json.dumps(
+            {
+                "total": 3,
+                "passed": 1,
+                "failed": 2,
+                "checks": [
+                    {"name": "ddev_status", "passed": False, "returncode": 1},
+                    {"name": "drush_status", "passed": True, "returncode": 0},
+                    {"name": "drush_cr", "passed": False, "returncode": 1},
+                ],
+            }
+        )
+
+        with patch("nichebench.execution.orchestrator.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout=json_output, stderr="")
+            with pytest.raises(ValidationError) as exc_info:
+                executor._run_runtime_preflight_workspace(tmp_path, "cage")
+
+        err_msg = str(exc_info.value)
+        assert "ddev_status" in err_msg
+        assert "drush_cr" in err_msg
+
+    def test_enabled_missing_script_raises(self, tmp_path, monkeypatch):
+        """enabled + missing script -> ValidationError indicating missing preflight script."""
+        executor = _make_executor({"runtime_smoke_preflight_enabled": True})
+
+        original_exists = Path.exists
+
+        def fake_exists(self_path: Path) -> bool:
+            if self_path.name == "runtime_smoke.py":
+                return False
+            return original_exists(self_path)
+
+        monkeypatch.setattr(Path, "exists", fake_exists)
+
+        with pytest.raises(ValidationError, match="not found"):
+            executor._run_runtime_preflight_workspace(tmp_path, "cage")
+
+
+# ---------------------------------------------------------------------------
+# Cage runtime USER env normalization
+# ---------------------------------------------------------------------------
+
+
+class TestCageRuntimeUserEnv:
+    """Cage runtime must set USER env var to prevent ddev username resolution failures."""
+
+    @patch("nichebench.execution.orchestrator.subprocess.run")
+    def test_cage_launch_sets_user_env_var(self, mock_run, tmp_path):
+        """USER env var is explicitly set in cage docker run command."""
+        executor = _make_executor(
+            {
+                "runtime_mode": "cage",
+                "runtime_container_image": "ghcr.io/opencode-ai/opencode:v0.14.0",
+            }
+        )
+        test_case = TestCaseSpec(id="test_user_env", type="runtime", raw={}, prompt="Implement task")
+        workspace = MagicMock()
+        workspace.path = tmp_path
+        profile = resolve_profile("offline_cli")
+
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        executor._run_container_runtime_task(
+            test_case=test_case,
+            workspace=workspace,
+            agent_manifest={},
+            runtime_config=executor.evaluation_config,
+            profile=profile,
+            timeout_seconds=30,
+        )
+
+        command = mock_run.call_args.args[0]
+        env_values = [command[i + 1] for i, part in enumerate(command[:-1]) if part == "-e"]
+
+        # USER must be set so ddev can determine the username inside the container
+        user_entries = [v for v in env_values if v.startswith("USER=")]
+        assert user_entries, f"USER env var not found in docker run command. env_values={env_values}"
+        assert user_entries[0] == "USER=opencode", f"Expected USER=opencode, got {user_entries[0]!r}"
+
+    @patch("nichebench.execution.orchestrator.subprocess.run")
+    def test_cage_launch_user_env_is_deterministic(self, mock_run, tmp_path):
+        """USER env var is always 'opencode' regardless of host user."""
+        executor = _make_executor(
+            {
+                "runtime_mode": "cage",
+                "runtime_container_image": "ghcr.io/opencode-ai/opencode:v0.14.0",
+            }
+        )
+        test_case = TestCaseSpec(id="test_user_env_2", type="runtime", raw={}, prompt="Task")
+        workspace = MagicMock()
+        workspace.path = tmp_path
+        profile = resolve_profile("offline_cli")
+
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+
+        # Run twice; both times USER must be the same fixed value
+        for _ in range(2):
+            executor._run_container_runtime_task(
+                test_case=test_case,
+                workspace=workspace,
+                agent_manifest={},
+                runtime_config=executor.evaluation_config,
+                profile=profile,
+                timeout_seconds=30,
+            )
+            command = mock_run.call_args.args[0]
+            env_values = [command[i + 1] for i, part in enumerate(command[:-1]) if part == "-e"]
+            user_entries = [v for v in env_values if v.startswith("USER=")]
+            assert len(user_entries) == 1, f"Expected exactly one USER= entry, got: {user_entries}"
+            assert user_entries[0] == "USER=opencode"
+
+
+class TestCageGitWrapper:
+    """Cage runtime prepends a git wrapper that blocks unsafe MUT commands."""
+
+    def test_git_wrapper_allows_inspection_and_blocks_mutation(self, tmp_path):
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        wrapper = TestExecutor._write_cage_git_wrapper(bin_dir)
+
+        allowed = subprocess.run([str(wrapper), "--version"], check=True, capture_output=True, text=True)
+        assert "git version" in allowed.stdout
+
+        blocked = subprocess.run(
+            [str(wrapper), "-C", ".", "checkout", "--", ".ddev/config.yaml"],
+            capture_output=True,
+            text=True,
+        )
+        assert blocked.returncode == 126
+        assert "git checkout is disabled" in blocked.stderr
+
+        sh_wrapper = bin_dir / "sh"
+        blocked_absolute = subprocess.run(
+            [str(sh_wrapper), "-c", "/usr/bin/git checkout HEAD -- config/sync/core.extension.yml"],
+            capture_output=True,
+            text=True,
+        )
+        assert blocked_absolute.returncode == 126
+        assert "Absolute /usr/bin/git" in blocked_absolute.stderr
+
+        bash_wrapper = bin_dir / "bash"
+        blocked_bash_absolute = subprocess.run(
+            [str(bash_wrapper), "-c", "/usr/bin/git reset --hard HEAD"],
+            capture_output=True,
+            text=True,
+        )
+        assert blocked_bash_absolute.returncode == 126
+        assert "Absolute /usr/bin/git" in blocked_bash_absolute.stderr
+
+    @patch("nichebench.execution.orchestrator.subprocess.run")
+    def test_cage_launch_mounts_wrapper_and_prepends_path(self, mock_run, tmp_path):
+        executor = _make_executor(
+            {
+                "runtime_mode": "cage",
+                "runtime_container_image": "ghcr.io/opencode-ai/opencode:v0.14.0",
+            }
+        )
+        test_case = TestCaseSpec(id="test_git_wrapper", type="runtime", raw={}, prompt="Task")
+        workspace = MagicMock()
+        workspace.path = tmp_path
+        profile = resolve_profile("offline_cli")
+
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        executor._run_container_runtime_task(
+            test_case=test_case,
+            workspace=workspace,
+            agent_manifest={},
+            runtime_config=executor.evaluation_config,
+            profile=profile,
+            timeout_seconds=30,
+        )
+
+        command = mock_run.call_args.args[0]
+        env_values = [command[i + 1] for i, part in enumerate(command[:-1]) if part == "-e"]
+        mount_values = [command[i + 1] for i, part in enumerate(command[:-1]) if part == "-v"]
+
+        assert "PATH=/nichebench/state/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" in env_values
+        assert any(value.endswith(":/nichebench/state/bin:ro") for value in mount_values)

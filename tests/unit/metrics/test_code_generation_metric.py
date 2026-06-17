@@ -69,10 +69,10 @@ class MyModule:
         expected_output="",  # Not used for code generation
     )
 
-    # Add checklist as attribute (this would normally come from YAML)
-    setattr(
-        tc, "checklist", ["Implements a class structure", "Contains at least one function", "Uses proper Python syntax"]
-    )
+    # Add checklist via metadata (DeepEval ≥3.4 made LLMTestCase strict pydantic)
+    tc.metadata = {
+        "checklist": ["Implements a class structure", "Contains at least one function", "Uses proper Python syntax"]
+    }
 
     metric = DeepEvalCodeGenerationMetric(judge=MockCodeJudge(), model="mock")
 
@@ -92,7 +92,7 @@ def test_deepeval_code_generation_metric_failure():
 
     tc = LLMTestCase(input="Create a simple module with a class", actual_output=code_output, expected_output="")
 
-    setattr(tc, "checklist", ["Implements a class structure", "Contains proper methods"])
+    tc.metadata = {"checklist": ["Implements a class structure", "Contains proper methods"]}
 
     metric = DeepEvalCodeGenerationMetric(judge=MockCodeJudge(), model="mock", threshold=0.5)
 
@@ -111,7 +111,7 @@ def my_function():
 
     tc = LLMTestCase(input="Create code with class and function", actual_output=code_output, expected_output="")
 
-    setattr(tc, "checklist", ["Has a function", "Has a class"])  # This will fail
+    tc.metadata = {"checklist": ["Has a function", "Has a class"]}  # This will fail
 
     metric = DeepEvalCodeGenerationMetric(judge=MockCodeJudge(), model="mock", threshold=0.4)
 
@@ -124,7 +124,7 @@ def my_function():
 def test_code_generation_metric_judge_response():
     """Test that the judge response is properly stored."""
     tc = LLMTestCase(input="Test prompt", actual_output="class Test: pass", expected_output="")
-    setattr(tc, "checklist", ["Has a class"])
+    tc.metadata = {"checklist": ["Has a class"]}
 
     metric = DeepEvalCodeGenerationMetric(judge=MockCodeJudge(), model="mock")
     metric.measure(tc)

@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 
 from nichebench.core.discovery import discover_frameworks
-from nichebench.core.loader_yaml import load_testcase_from_file
-from nichebench.core.validation import (
+from nichebench.core.framework_loader import load_testcase_from_file
+from nichebench.execution.runtime.scoring import (
     validate_container_image_pin,
     validate_runtime_testcase,
 )

@@ -109,8 +109,8 @@ def render_report_table(summary: dict, title: Optional[str] = None) -> None:
     from rich.console import Console
 
     table = Table(title=title or "Results Summary")
-    for k in summary.keys():
+    for k in summary:
         table.add_column(str(k))
-    table.add_row(*[str(summary[k]) for k in summary.keys()])
+    table.add_row(*[str(summary[k]) for k in summary])
     console = Console()
     console.print(table)

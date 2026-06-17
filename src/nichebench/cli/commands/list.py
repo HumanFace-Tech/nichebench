@@ -18,11 +18,6 @@ app = typer.Typer()
 console = Console()
 
 
-def _category_counts(tasklist):
-    # Returns dict: {task_type: count}
-    return {t.task_type: len(t.testcases) for t in tasklist}
-
-
 @app.command()
 def frameworks():
     """List discovered frameworks, one row per test category."""

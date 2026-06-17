@@ -4,6 +4,7 @@ import sys
 
 import typer
 
+from .commands import forensics as forensics_cmd
 from .commands import list as list_cmd
 from .commands import report as report_cmd
 from .commands import run as run_cmd
@@ -15,6 +16,9 @@ app.command(name="list", help="List available frameworks and tasks.")(list_cmd.f
 app.command(name="list-tasks", help="List tasks for a given framework.")(list_cmd.tasks)
 app.command(name="show", help="Show a test case by id.")(show_cmd.case)
 app.command(name="run", help="Run all test cases for a framework/category.")(run_cmd.all)
+app.command(name="forensics", help="Analyse trial/run artifacts and produce a forensics report.")(
+    forensics_cmd.forensics
+)
 app.add_typer(
     report_cmd.app,
     name="report",

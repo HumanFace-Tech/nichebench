@@ -27,6 +27,7 @@
 # ------------------------------
 # export GROQ_API_KEY="your_groq_key_here"     # For judge models
 # export OPENAI_API_KEY="your_openai_key_here" # For judge models (optional)
+# export MINIMAX_API_KEY="your_minimax_token_plan_key"  # Token Plan key from platform.minimax.io
 #
 # Example Commands:
 # ----------------
@@ -161,3 +162,107 @@ profiles:
 #   budget:
 #     mut: {provider: "together", model: "meta-llama/Llama-3-8b-chat-hf", temp: 0.0}
 #     judge: {provider: "groq", model: "llama3-70b-8192", temp: 0.5}
+
+  # MiniMax Token Plan — M2.7 (SOTA coding/agent model)
+  #   Context: 204,800 tokens  |  Max output: 32,768 tokens
+  # Requires:
+  #   export MINIMAX_API_KEY="<subscription-key-from-platform.minimax.io>"
+  # The official `minimax` LiteLLM provider (litellm >= 1.83) auto-resolves
+  # the key from env. The model field is the bare model ID (no provider
+  # prefix) — ``get_model_string()`` adds the ``minimax/`` prefix.
+  minimax_m2_7:
+    mut:
+      provider: "minimax"
+      model: "MiniMax-M2.7"
+      parameters:
+        temperature: 0.0
+        max_tokens: 32768
+    judge:
+      provider: "minimax"
+      model: "MiniMax-M2.7"
+      parameters:
+        temperature: 0.3
+        max_tokens: 4096
+    evaluation:
+      runtime_opencode_api_base: "https://api.minimax.io/v1"
+      runtime_opencode_context_limit: 204800
+      runtime_opencode_output_limit: 32768
+      runtime_opencode_model_limits:
+        MiniMax-M2.7:
+          context: 204800
+          output: 32768
+
+  # MiniMax Token Plan — M3 (frontier model, 1M context, native multimodal)
+  #   Context: 1,048,576 tokens  |  Max output: 32,768 tokens
+  minimax_m3:
+    mut:
+      provider: "minimax"
+      model: "MiniMax-M3"
+      parameters:
+        temperature: 0.0
+        max_tokens: 32768
+    judge:
+      provider: "minimax"
+      model: "MiniMax-M3"
+      parameters:
+        temperature: 0.3
+        max_tokens: 4096
+    evaluation:
+      runtime_opencode_api_base: "https://api.minimax.io/v1"
+      runtime_opencode_context_limit: 1048576
+      runtime_opencode_output_limit: 32768
+      runtime_opencode_model_limits:
+        MiniMax-M3:
+          context: 1048576
+          output: 32768
+
+  # Cross-eval: M3 as MUT, M2.7 as judge (and vice versa)
+  minimax_m3_mut_m27_judge:
+    mut:
+      provider: "minimax"
+      model: "MiniMax-M3"
+      parameters:
+        temperature: 0.0
+        max_tokens: 32768
+    judge:
+      provider: "minimax"
+      model: "MiniMax-M2.7"
+      parameters:
+        temperature: 0.3
+        max_tokens: 4096
+    evaluation:
+      runtime_opencode_api_base: "https://api.minimax.io/v1"
+      runtime_opencode_context_limit: 1048576
+      runtime_opencode_output_limit: 32768
+      runtime_opencode_model_limits:
+        MiniMax-M3:
+          context: 1048576
+          output: 32768
+        MiniMax-M2.7:
+          context: 204800
+          output: 32768
+
+  minimax_m27_mut_m3_judge:
+    mut:
+      provider: "minimax"
+      model: "MiniMax-M2.7"
+      parameters:
+        temperature: 0.0
+        max_tokens: 32768
+    judge:
+      provider: "minimax"
+      model: "MiniMax-M3"
+      parameters:
+        temperature: 0.3
+        max_tokens: 4096
+    evaluation:
+      runtime_opencode_api_base: "https://api.minimax.io/v1"
+      runtime_opencode_context_limit: 1048576
+      runtime_opencode_output_limit: 32768
+      runtime_opencode_model_limits:
+        MiniMax-M3:
+          context: 1048576
+          output: 32768
+        MiniMax-M2.7:
+          context: 204800
+          output: 32768
