@@ -58,11 +58,11 @@ class DeepEvalQuizMetric(BaseMetric):
             question = getattr(test_case, "input", "") or ""
             actual = getattr(test_case, "actual_output", "") or ""
             expected = getattr(test_case, "expected_output", "") or ""
-            # We don't require explicit choices in the test case; pass empty list.
-            # Forward judge_model and allow frameworks to provide a custom
-            # judge_system_prompt via the test_case if present (see runner).
-            judge_system_prompt = getattr(test_case, "judge_system_prompt", None)
-            judge_notes = getattr(test_case, "judge_notes", None)
+            # Dynamic fields travel on ``metadata`` (DeepEval ≥3.4 made
+            # LLMTestCase strict pydantic — no free-form setattr).
+            meta = dict(test_case.metadata) if test_case.metadata else {}
+            judge_system_prompt = meta.get("judge_system_prompt")
+            judge_notes = meta.get("judge_notes")
             res = self.judge.score_quiz(
                 question=question,
                 choices=[],

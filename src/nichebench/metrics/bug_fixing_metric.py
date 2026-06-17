@@ -58,9 +58,12 @@ class DeepEvalBugFixingMetric(BaseMetric):
             # Extract test case data
             bug_description = getattr(test_case, "input", "") or ""
             proposed_fix = getattr(test_case, "actual_output", "") or ""
-            checklist = getattr(test_case, "checklist", [])
-            judge_system_prompt = getattr(test_case, "judge_system_prompt", None)
-            judge_notes = getattr(test_case, "judge_notes", None)
+            # Dynamic fields travel on ``metadata`` (DeepEval ≥3.4 made
+            # LLMTestCase strict pydantic — no free-form setattr).
+            meta = dict(test_case.metadata) if test_case.metadata else {}
+            checklist = meta.get("checklist", [])
+            judge_system_prompt = meta.get("judge_system_prompt")
+            judge_notes = meta.get("judge_notes")
 
             # Use the score_bug_fixing method
             res = self.judge.score_bug_fixing(

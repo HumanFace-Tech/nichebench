@@ -30,7 +30,7 @@ class QuizMetric:
             judge_notes=judge_notes,
         )
         # Normalize keys and ensure presence
-        out = {
+        return {
             "id": task_id,
             "pass": bool(res.get("pass", False)),
             "selected": res.get("selected", ""),
@@ -38,4 +38,3 @@ class QuizMetric:
             "explanation": res.get("explanation", ""),
             "judge_raw": res.get("raw", ""),
         }
-        return out
