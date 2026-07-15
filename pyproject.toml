@@ -1,10 +1,11 @@
 [tool.poetry]
 name = "nichebench"
-version = "0.1.0"
-description = ""
+version = "0.2.0"
+description = "Benchmarking harness for evaluating LLM agents on structured tasks across CMS and code generation domains."
 authors = ["Sergiu Nagailic (Nikro) <nikro.md@gmail.com>"]
 readme = "README.md"
 packages = [{include = "nichebench", from = "src"}]
+exclude = ["src/nichebench/frameworks/*/data/**"]
 
 [tool.poetry.scripts]
 nichebench = "nichebench.cli.app:main"

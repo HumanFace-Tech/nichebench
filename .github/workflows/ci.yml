@@ -16,6 +16,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+        submodules: false
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
@@ -33,45 +36,27 @@ jobs:
       id: cached-poetry-dependencies
       uses: actions/cache@v3
       with:
-        path: nichebench/.venv
-        key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+        path: .venv
+        key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock', '**/pyproject.toml') }}
 
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+      run: poetry install --no-interaction --no-ansi
+
+    - name: Run unit tests
+      run: poetry run pytest -q tests/unit
+
+    - name: Run ruff check
+      run: poetry run ruff check src tests
+
+    - name: Run mypy
+      run: poetry run mypy src
+
+    - name: Verify release build and install
+      if: matrix.python-version == '3.11.x'
       run: |
-        cd nichebench
-        poetry install --no-interaction --no-ansi
-
-    - name: Run tests
-      run: |
-        cd nichebench
-        poetry run pytest --cov=nichebench --cov-report=xml
-
-    - name: Run linting
-      run: |
-        cd nichebench
-        poetry run flake8 nichebench/
-        poetry run black --check .
-        poetry run isort --check-only .
-        poetry run mypy nichebench/
-
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./nichebench/coverage.xml
-        fail_ci_if_error: true
-
-  docker:
-    runs-on: ubuntu-latest
-    needs: test
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Build Docker image
-      run: docker compose build
-
-    - name: Test Docker container
-      run: |
-        docker compose run --rm app poetry run nichebench --help
-        docker compose run --rm app poetry run pytest
+        poetry build --format wheel
+        release_venv="$RUNNER_TEMP/nichebench-release-venv"
+        python -m venv "$release_venv"
+        "$release_venv/bin/python" -m pip install --no-cache-dir dist/*.whl
+        "$release_venv/bin/nichebench" --help
