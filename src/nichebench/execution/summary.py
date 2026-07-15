@@ -11,11 +11,53 @@ This module does NOT own:
     - Parallel execution (see parallel.py)
 """
 
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from nichebench.execution.result import TestResult
 from nichebench.utils.io import save_json
+
+
+def normalize_score(value: Any, default: float = 0.0) -> float:
+    """Coerce a score-like value to a finite float in ``[0, 1]``.
+
+    Shared coercion helper used by summary aggregation and CLI report
+    rendering so both views agree on what counts as a valid score.
+
+    Handles ``int``, ``float``, numeric strings (e.g. ``"0.95"``),
+    and ``bool`` (which is an ``int`` subclass). Returns ``default`` for
+    non-coercible values, ``bool`` inputs, non-finite floats and numeric
+    strings (``nan``, ``inf``, ``-inf``), and any numeric or numeric-string
+    outside the ``[0, 1]`` range.
+
+    Args:
+        value: The value to coerce.
+        default: Fallback returned for invalid inputs.
+
+    Returns:
+        A finite float in ``[0, 1]`` or ``default``.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        result = float(value)
+        if not math.isfinite(result):
+            return default
+        if result < 0.0 or result > 1.0:
+            return default
+        return result
+    if isinstance(value, str):
+        try:
+            result = float(value)
+            if not math.isfinite(result):
+                return default
+            if result < 0.0 or result > 1.0:
+                return default
+            return result
+        except (ValueError, TypeError):
+            return default
+    return default
 
 
 def categorize_result(result: TestResult) -> str:
@@ -30,7 +72,7 @@ def categorize_result(result: TestResult) -> str:
     if result.category in ("code_generation", "bug_fixing"):
         judge_output = result.judge_output
         if isinstance(judge_output, dict):
-            score = judge_output.get("overall_score", 0.0)
+            score = normalize_score(judge_output.get("overall_score"), 0.0)
         else:
             score = 1.0 if result.passed else 0.0
 
@@ -47,14 +89,36 @@ def _extract_runtime_score(result: TestResult) -> float:
 
     Prefers ``hybrid_score`` (deterministic + judge blended), then the
     deterministic-only or judge-only score, and finally the boolean pass
-    flag as 1.0/0.0.  Never raises; returns 0.0 if no score is present.
+    flag as 1.0/0.0. Invalid score-like values in a higher-priority field —
+    including booleans, non-finite floats, out-of-range floats, and numeric
+    strings that fail range checks (``"nan"``, ``"inf"``, ``"1.5"``, etc.) —
+    fall through to the next lower-priority field. The boolean ``passed``
+    fallback applies only when no score-like value is present at all.
     """
     judge_output = result.judge_output
-    if isinstance(judge_output, dict):
-        for key in ("hybrid_score", "final_score", "judge_score", "deterministic_score"):
-            value = judge_output.get(key)
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                return float(value)
+    if not isinstance(judge_output, dict):
+        return 1.0 if result.passed else 0.0
+
+    any_score_like_found = False
+    for key in ("hybrid_score", "final_score", "judge_score", "deterministic_score"):
+        value = judge_output.get(key)
+        if isinstance(value, (bool, int, float)):
+            any_score_like_found = True
+            # Use nan as a sentinel: normalize_score never returns nan for valid input.
+            score = normalize_score(value, default=math.nan)
+            if not math.isnan(score):
+                return score
+        elif isinstance(value, str):
+            try:
+                float(value)  # probe; non-convertible → skip this key
+            except (ValueError, TypeError):
+                continue
+            any_score_like_found = True
+            score = normalize_score(value, default=math.nan)
+            if not math.isnan(score):
+                return score
+    if any_score_like_found:
+        return 0.0
     return 1.0 if result.passed else 0.0
 
 
@@ -78,7 +142,7 @@ def compute_average_score(results: List[TestResult], category: str) -> float:
         elif category in ("code_generation", "bug_fixing", "code_agent"):
             judge_output = result.judge_output
             if isinstance(judge_output, dict):
-                score = judge_output.get("overall_score", 0.0)
+                score = normalize_score(judge_output.get("overall_score"), 0.0)
             else:
                 score = 1.0 if result.passed else 0.0
         else:
