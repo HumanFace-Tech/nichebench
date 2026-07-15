@@ -89,7 +89,8 @@ Runtime tasks default to `cage` mode. The cage is a Docker container that:
 |---|---|
 | Workspace path | `workspaces/run-<task_id>-<uuid8>/` |
 | DDEV project name | `nb-<safe_task_id>-<uuid8>` — parallel-safe, never collides |
-| DDEV cleanup | `ddev stop --remove-data -y` + workspace dir deletion |
+| DDEV cleanup (manual smoke) | `ddev stop --remove-data --omit-snapshot` + workspace dir deletion |
+| DDEV cleanup (executor internal) | `ddev delete --omit-snapshot -y` (see `src/nichebench/execution/runtime/workspace/ddev.py`) |
 | Workspace retention | Set `runtime_keep_workspaces: true` to debug |
 
 **Never share a DDEV project between runs. Never reuse a workspace dir.**
