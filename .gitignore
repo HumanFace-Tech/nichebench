@@ -174,8 +174,11 @@ BLOCKERS.md
 # Root-level DDEV artifacts (runtime pack lives in submodule)
 .ddev/
 
-# Generated audit/analysis reports (raw outputs)
-reports/
+# Internal historical audits (local-only, never part of public releases)
+docs/archive/reports/
+
+# Generated audit/analysis reports (raw outputs, root-level only)
+/reports/
 
 # Runtime task workspaces (ephemeral, never commit)
 workspaces/

@@ -34,8 +34,10 @@ ddev list
 #    DO NOT kill PID of `opencode . --continue` — that's the active interactive session.
 docker rm -f <cage_container_id_or_name>
 
-# 2. Remove the matching DDEV project (deletes volumes + images).
-ddev delete -y nb-drupal-runtime-001-<uuid8>
+# 2. Stop the matching DDEV project and drop its data volume.
+#    Manual smoke cleanup intentionally uses `ddev stop` (not `ddev delete`,
+#    which is the executor's internal cleanup command).
+ddev stop --remove-data --omit-snapshot nb-drupal-runtime-001-<uuid8>
 
 # 3. Poweroff DDEV if you want a fully clean slate.
 ddev poweroff
@@ -82,19 +84,55 @@ python scripts/runtime_maintenance.py cleanup-workspaces   # actual cleanup
 
 ## DDEV Disk Cleanup
 
+`docker prune` and `docker prune -a` are **not valid commands**. Use the
+real prune subcommands below, or the bundled helper.
+
+### Manual Prune
+
 ```bash
-# Conservative prune (removes stopped containers, unused images)
-docker prune
+# Conservative prune — clears dangling builder cache, then stops/removes
+# stopped containers, dangling networks, and dangling images.
+docker builder prune -f
+docker system prune -f
 
-# Aggressive prune (removes all unused images, not just dangling)
-docker prune -a
+# Aggressive prune — also removes ALL unused images (not just dangling).
+docker system prune -af
 
-# DDEV poweroff (stops all projects)
+# DESTRUCTIVE: also removes every unused Docker volume on the host.
+# Volumes not attached to a running container are deleted permanently;
+# any database/file data stored there is gone. Only run this if you
+# are sure no other project depends on those volumes.
+docker system prune -af --volumes
+
+# DDEV poweroff (stops all projects; safe)
 ddev poweroff
 
-# Remove dangling DDEV volumes
-ddev delete -y <project> --remove-data
+# Stop a specific DDEV project and drop its data volume.
+# NOTE: This is the manual smoke cleanup command. The executor's internal
+# cleanup is `ddev delete --omit-snapshot -y` (see ddev.py); operators
+# running smoke tests after an aborted run should use `ddev stop` instead.
+ddev stop --remove-data --omit-snapshot <project>
 ```
+
+### Bundled Helper
+
+`scripts/runtime_maintenance.py` exposes a `prune-docker` subcommand that
+wraps the same calls and adds a dry-run mode:
+
+```bash
+# Show actions without running them
+python scripts/runtime_maintenance.py prune-docker --dry-run
+
+# Conservative prune (builder cache + system prune, no volumes)
+python scripts/runtime_maintenance.py prune-docker
+
+# Aggressive prune — also adds `docker system prune -af --volumes`.
+# Same destructive volume/image impact as the manual command above.
+python scripts/runtime_maintenance.py prune-docker --aggressive
+```
+
+`--aggressive` and `--volumes` both reach for unused Docker volumes. Run
+them only when you understand the destructive impact.
 
 ## Never Do
 

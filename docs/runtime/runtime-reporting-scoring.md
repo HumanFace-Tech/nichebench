@@ -36,7 +36,7 @@ The LLM judge consumes the artifact bundle and evaluates against a rubric checkl
 hybrid_score = (deterministic_weight × deterministic_score) + (judge_weight × judge_score)
 ```
 
-Default weights per manifest: 50% deterministic / 50% judge. Weights are configurable per-task.
+Default weights per manifest: 70% deterministic / 30% judge. Weights are configurable per-task.
 
 ### Critical Gate
 
@@ -83,7 +83,7 @@ Columns:
 | Retention | Files |
 |---|---|
 | `minimal` | `metadata.json`, `runtime_trace.json` |
-| `standard` | `minimal` + `checks.json`, `final.diff`, `run.log`, `trajectory.json`, `last_phpcs.txt`, `last_phpstan.txt`, `watchdog_errors.txt` when available |
+| `standard` | `minimal` + `checks.json`, `final.diff`, `run.log`, `trajectory.json`, `last_phpcs.txt`, `last_phpstan.txt`, `watchdog_errors.txt`, `opencode_partial_trajectory.json`, `opencode_session_dump.json` when available |
 | `full` | `standard` + optional raw/debug/browser payloads |
 
 ### Key Artifacts
@@ -99,27 +99,52 @@ Columns:
 | `last_phpcs.txt` | PHPCS output from last static-analysis check |
 | `last_phpstan.txt` | PHPStan output from last static-analysis check |
 | `watchdog_errors.txt` | Drupal watchdog PHP errors captured during run |
+| `opencode_partial_trajectory.json` | Partial trajectory snapshot captured on timeout/abort (optional) |
+| `opencode_session_dump.json` | OpenCode session dump for forensic inspection (optional) |
 
 ---
 
-## CSV Export
+## Results Layout
 
-Run results are persisted as CSV under `results/drupal_runtime/runtime/<model>/<run_id>/`:
+Run results are persisted as JSON under
+`results/<framework>/<category>/<model>/<timestamp>-<uuid8>/`:
+
+- The `<model>` segment is the MUT model string with `/` replaced by `-`
+  (e.g. `groq/llama-3.3-70b-versatile` → `groq-llama-3.3-70b-versatile`).
+- `<timestamp>` follows the configured `timestamp_format` (default
+  `%Y%m%d_%H%M%S`); an 8-character UUID suffix is appended so two runs that
+  share a timestamp bucket never collide on `details.jsonl` / `summary.json`.
 
 ```
-results/drupal_runtime/runtime/groq/llama-3.3-70b-versatile/20260615_120000/
-├── runtime/
-│   └── drupal_runtime_001/
-│       ├── metadata.json
-│       ├── runtime_trace.json
-│       ├── checks.json
-│       ├── final.diff
-│       ├── run.log
-│       ├── trajectory.json
-│       ├── last_phpcs.txt
-│       ├── last_phpstan.txt
-│       └── watchdog_errors.txt
-└── summary.csv         # Rich table row for this run
+results/drupal_runtime/runtime/groq-llama-3.3-70b-versatile/20260615_120000-abcd1234/
+├── summary.json             # Aggregate run statistics
+├── details.jsonl            # Per-test results (append-only)
+└── runtime/
+    └── drupal_runtime_001/  # Per-test artifact bundle (one dir per test_id)
+        ├── metadata.json
+        ├── runtime_trace.json
+        ├── checks.json
+        ├── final.diff
+        ├── run.log
+        ├── trajectory.json
+        ├── last_phpcs.txt      # optional — only when the validation hook fires
+        ├── last_phpstan.txt    # optional — only when the validation hook fires
+        ├── watchdog_errors.txt # optional — only when the validation hook fires
+        ├── opencode_partial_trajectory.json # optional — written on timeout/abort
+        └── opencode_session_dump.json        # optional — written on timeout/abort
 ```
 
-Raw CSVs are stored under `reports/` at the repo root. Dated curated summaries are in [docs/archive/reports/](../archive/reports/index.md).
+- The run root holds `summary.json` (aggregate) and `details.jsonl`
+  (append-only per-test stream). There is **no** `summary.csv`; CSV export is
+  not part of the persisted layout.
+- Optional check-output files (`last_phpcs.txt`, `last_phpstan.txt`,
+  `watchdog_errors.txt`) are emitted only when their respective validation
+  hooks fire. With `runtime_artifact_retention: minimal`, only
+  `metadata.json` and `runtime_trace.json` are written.
+- Optional trajectory artifacts (`opencode_partial_trajectory.json`,
+  `opencode_session_dump.json`) are written by the artifact writer when
+  available (e.g. on timeout/abort) and require `standard` or `full`
+  retention to be persisted.
+- Multi-trial runs nest artifacts at `runtime/<test_id>/trial_<n>/`.
+
+Public documentation describes reporting methodology, not private run outcomes. Raw results, reports, local configs, credentials, and historical internal audits are not committed; historical audits remain local-only.

@@ -52,7 +52,7 @@ judge_notes: |
 
 - **Deterministic** (if checks defined): file existence, grep patterns, drush commands
 - **Judge**: rubric scoring against `judge_checklist`, each item scored 0-1
-- **Hybrid**: weighted blend (default 50/50)
+- **Hybrid**: weighted blend (default 70% deterministic / 30% judge)
 
 ## Multi-Turn Mode
 

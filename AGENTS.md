@@ -113,9 +113,43 @@ ddev list
 
 ---
 
+## Quality Gates
+
+### Unit Gates (no Docker/DDEV required)
+
+Run these after any code change:
+
+```bash
+poetry run pytest -q tests/unit
+poetry run ruff check src tests
+poetry run mypy src
+```
+
+All three must pass before committing.
+
+### Runtime Smoke (requires Docker + DDEV)
+
+Runtime tasks require a Docker-capable host with DDEV installed. These checks also validate that teardown runs cleanly:
+
+```bash
+# Quick health check
+docker --version
+ddev version
+
+# Runtime smoke — requires enable_runtime_tasks: true in nichebench.yml
+poetry run nichebench run drupal_runtime runtime --ids drupal_runtime_001 \
+  --model groq/llama-3.3-70b-versatile
+```
+
+> **Sequential DDEV constraint:** Only one DDEV project can be active on a host at a time. Do not attempt parallel runtime runs — they will produce resource conflicts.
+
+CI does **not** run runtime smoke. It only runs the unit gates above.
+
+---
+
 ## Dependency Notes
 
-`litellm` is pinned to `>=1.75.8,<1.82.6`. Do not widen this range without testing. The upper bound guards against breaking API changes that affect both MUT and judge call paths.
+`litellm` is pinned to `>=1.89.1,<1.90`. Do not widen this range without testing. The upper bound guards against breaking API changes that affect both MUT and judge call paths.
 
 ---
 

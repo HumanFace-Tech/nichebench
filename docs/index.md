@@ -16,8 +16,9 @@ Non-runtime task categories: quiz, code generation, bug fixing.
 ### [Operations](./operations/index.md)
 DDEV/Docker cleanup, zombie stale-run procedures, local config/run hygiene, and maintenance scripts.
 
-### [Archived Reports](./archive/reports/index.md)
-Dated internal audit snapshots and validation reports — not canonical documentation.
+## Benchmark Artifact Privacy
+
+Public documentation describes the benchmarking methodology and scoring, not private run outcomes. Raw results, reports, local configs, credentials, and historical internal audits are not committed; historical audits remain local-only.
 
 ## Quick Reference
 
@@ -44,6 +45,18 @@ poetry run pytest -q tests/unit
 | `code_generation` | Classic | Single/multi-turn code gen, LLM-as-a-Judge |
 | `bug_fixing` | Classic | Multi-turn bug fix conversation |
 | `drupal_runtime` | Runtime | Full agentic runtime on live DDEV. **Enable with** `evaluation.enable_runtime_tasks: true` |
+
+## Quality Gates (Contributors)
+
+Code changes require the unit gates to pass before committing:
+
+```bash
+poetry run pytest -q tests/unit
+poetry run ruff check src tests
+poetry run mypy src
+```
+
+Runtime smoke additionally requires Docker + DDEV. See [AGENTS.md](../AGENTS.md#quality-gates) for the full procedure and sequential-DDEV constraint.
 
 ## Configuration
 

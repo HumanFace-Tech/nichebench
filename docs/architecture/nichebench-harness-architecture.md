@@ -37,8 +37,7 @@ nichebench/
 │   ├── architecture/           # This file
 │   ├── runtime/                # Runtime task documentation
 │   ├── tasks/                  # Classic task documentation
-│   ├── operations/             # Operations & maintenance
-│   └── archive/reports/        # Dated audit snapshots
+│   └── operations/             # Operations & maintenance
 ├── scripts/                    # runtime_smoke.py, runtime_maintenance.py, forensics.py
 ├── tests/unit/                 # Unit tests
 └── openspec/                   # Design proposals and task specs
@@ -146,7 +145,7 @@ See [Runtime Reporting & Scoring](../runtime/runtime-reporting-scoring.md) for f
 | **Judge** | LLM judge evaluating artifact bundle | Per rubric in manifest |
 | **Hybrid** | Weighted blend | `deterministic_weight × deterministic + judge_weight × judge` |
 
-Default weights: 50% deterministic / 50% judge. Weights are set per-manifest.
+Default weights: 70% deterministic / 30% judge. Weights are set per-manifest.
 
 ### Critical Gate
 
@@ -200,7 +199,7 @@ evaluation:
 
 ## Dependency Notes
 
-`litellm` is pinned to `>=1.75.8,<1.82.6`. Do not widen this range without testing. The upper bound guards against breaking API changes that affect both MUT and judge call paths.
+`litellm` is pinned to `>=1.89.1,<1.90`. Do not widen this range without testing. The upper bound guards against breaking API changes that affect both MUT and judge call paths.
 
 ---
 
@@ -215,3 +214,19 @@ OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
 NICHEBENCH_JUDGE=openai/gpt-4o   # optional judge override
 ```
+
+---
+
+## Benchmark Artifact Privacy
+
+The following are intentionally **never committed** to the repository (see `.gitignore`):
+
+| What | Why |
+|---|---|
+| `results/`, `/reports/` | Raw benchmark outputs and generated reports |
+| `nichebench.yml` | Local operator configuration with credentials and private endpoints |
+| `.env`, `.env.local` | Provider API keys and secrets |
+| `workspaces/` | Ephemeral runtime task workspaces |
+| Historical internal audits | Local-only historical material; never part of public releases |
+
+Public documentation describes the **methodology** — scoring semantics, task types, and evaluation protocols — not private benchmark outcomes. Raw results, reports, local configs, credentials, and historical internal audits are not committed; historical audits remain local-only.

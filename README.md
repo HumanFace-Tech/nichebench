@@ -30,7 +30,9 @@ poetry run pytest -q tests/unit
 | `bug_fixing` | Classic | Multi-turn bug fix conversation |
 | `drupal_runtime` | Runtime | Full agentic runtime on live DDEV |
 
-**Runtime tasks are disabled by default.** Enable with:
+**Runtime tasks are disabled by default.** Enable with `enable_runtime_tasks: true` in `nichebench.yml`.
+
+> **Sequential DDEV constraint:** Only one DDEV project can be active per host. Parallel runtime runs are not supported.
 
 ```yaml
 evaluation:
@@ -63,7 +65,10 @@ NICHEBENCH_JUDGE=openai/gpt-4o
 | [docs/runtime/](docs/runtime/index.md) | Runtime task docs: architecture, authoring, smoke tests, diagnostics, scoring |
 | [docs/tasks/](docs/tasks/index.md) | Classic task docs: quiz, code generation, bug fixing |
 | [docs/operations/](docs/operations/index.md) | DDEV/Docker cleanup, zombie stale-run, host hygiene |
-| [docs/archive/reports/](docs/archive/reports/index.md) | Dated audit snapshots (not canonical) |
+
+## Private Benchmark Artifacts
+
+Public documentation describes the benchmarking methodology and scoring, not private run outcomes. Raw results, reports, local configs, credentials, and historical internal audits are not committed; historical audits remain local-only.
 
 ## Private Test Data
 
@@ -86,7 +91,7 @@ git submodule update --init --recursive
 
 - **Deterministic** = passed checks / total checks
 - **Judge** = LLM judge evaluating artifact bundle
-- **Hybrid** = weighted blend (default 50/50 per manifest)
+- **Hybrid** = weighted blend (default 70% deterministic / 30% judge; configurable per manifest)
 - Any critical check failure → `passed=False`
 - Default threshold: `0.7`
 
