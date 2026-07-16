@@ -43,5 +43,5 @@
 ## 7. Commit and release sequencing
 
 - [x] 7.1 Update the parent runtime-pack gitlink to its latest owner-provided revision.
-- [ ] 7.2 With explicit approval, commit the parent release-hardening changes selectively.
-- [ ] 7.3 With explicit approval after CI passes, create and push the `0.2.0` release tag.
+- [x] 7.2 With explicit approval, commit the parent release-hardening changes selectively.
+- [x] 7.3 With explicit approval after CI passes, create and push the `0.2.0` release tag.
