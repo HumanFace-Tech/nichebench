@@ -41,9 +41,7 @@ from nichebench.core.datamodel import TestCaseSpec
 from nichebench.execution.diagnostics.trace import RuntimeTrace
 from nichebench.execution.result import TestResult
 from nichebench.execution.runtime.executor import cleanup as executor_cleanup
-from nichebench.execution.runtime.executor import (
-    failure_shortcut as executor_failure_shortcut,
-)
+from nichebench.execution.runtime.executor import failure_shortcut as executor_failure_shortcut
 from nichebench.execution.runtime.executor import review_nudge as executor_review_nudge
 from nichebench.execution.runtime.executor import stages as executor_stages
 
@@ -88,6 +86,11 @@ def execute_runtime_test(self, test_case: TestCaseSpec, trial: int = 0) -> TestR
     runtime_mode = str(runtime_config.get("runtime_mode", "cage"))
     effective_runtime_mode = "cage" if runtime_mode in ("cage", "container") else runtime_mode
     runtime_timeout_seconds, keep_workspace, _ = executor_stages.resolve_runtime_config(runtime_config)
+
+    # Run-local capture session, allocated from results_outdir BEFORE the cage
+    # launches so a hard failure still leaves an archive. Passed explicitly
+    # down; never stored on the executor.
+    capture = self._allocate_capture_session(runtime_config, test_case.id)
 
     workspace_dir: Optional[Path] = None
     runtime_hints_path: Optional[Path] = None
@@ -165,6 +168,8 @@ def execute_runtime_test(self, test_case: TestCaseSpec, trial: int = 0) -> TestR
                 runtime_config=runtime_config,
                 profile=profile,
                 timeout_seconds=runtime_timeout_seconds,
+                capture=capture,
+                attempt_label="initial",
             )
         else:
             raise _executor_globals().ValidationError(f"Unsupported runtime mode: {effective_runtime_mode}")
@@ -202,6 +207,7 @@ def execute_runtime_test(self, test_case: TestCaseSpec, trial: int = 0) -> TestR
                         profile=profile,
                         runtime_timeout_seconds=runtime_timeout_seconds,
                         review_nudge=review_nudge,
+                        capture=capture,
                     )
                 except Exception as exc:
                     mut_output, run_log = executor_review_nudge.handle_review_pass_failure(
@@ -242,6 +248,10 @@ def execute_runtime_test(self, test_case: TestCaseSpec, trial: int = 0) -> TestR
         metadata = result.runtime_artifacts["metadata.json"]
         if isinstance(metadata, dict):
             metadata["runtime_hints_enabled"] = bool(runtime_hints_path)
+            capture_ref = capture.result_reference() if capture is not None else None
+            if capture_ref is not None:
+                metadata["runtime_capture"] = capture_ref
+                result.runtime_artifacts["capture.json"] = capture_ref
             if runtime_hints_path is not None:
                 metadata["runtime_hints_file"] = str(runtime_hints_path)
         # Store first pass output in artifacts when review nudge was used
@@ -308,15 +318,16 @@ def execute_runtime_test(self, test_case: TestCaseSpec, trial: int = 0) -> TestR
 
         # Stage: judge_scoring  # noqa: ERA001
         current_stage = "judge_scoring"
-        judge_score, runtime_judge_output = executor_stages.run_judge_scoring(
-            test_case=test_case,
-            user_input=user_input,
-            mut_output=mut_output,
-            judge_runner=self.judge_runner,
-            judge_system_prompt=self.judge_system_prompt,
-            runtime_artifacts=result.runtime_artifacts,
-            runtime_config=runtime_config,
-        )
+        with executor_cleanup.application_capture_scope(capture, lane="judge", label="score_runtime"):
+            judge_score, runtime_judge_output = executor_stages.run_judge_scoring(
+                test_case=test_case,
+                user_input=user_input,
+                mut_output=mut_output,
+                judge_runner=self.judge_runner,
+                judge_system_prompt=self.judge_system_prompt,
+                runtime_artifacts=result.runtime_artifacts,
+                runtime_config=runtime_config,
+            )
 
         hybrid_score = scorer.compute_hybrid_score(
             check_results=check_results,
@@ -361,6 +372,8 @@ def execute_runtime_test(self, test_case: TestCaseSpec, trial: int = 0) -> TestR
         )
 
     finally:
+        executor_cleanup.finalize_capture(capture=capture, current_stage=current_stage)
+        executor_cleanup.attach_capture_reference(capture=capture, trace=trace, result=result)
         executor_cleanup.stage_cleanup(trace)
         executor_cleanup.cleanup_workspace(
             workspace=workspace,

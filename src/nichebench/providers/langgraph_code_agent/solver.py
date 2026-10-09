@@ -82,7 +82,7 @@ def create_solver_node(
 
         # Create simple solver prompt
         solver_messages = [
-            SystemMessage(content=CODE_AGENT_SOLVER_PROMPT),
+            SystemMessage(content=CODE_AGENT_SOLVER_PROMPT or ""),
             HumanMessage(
                 content=solver_request_template.format(
                     original_task=state["original_task"],

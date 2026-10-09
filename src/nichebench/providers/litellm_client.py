@@ -43,10 +43,12 @@ modifies ``litellm.api_base`` outside this wrapper risks corrupting the state
 seen by concurrent or subsequent calls.
 """
 
+import contextlib
 import json
 import logging
 import time
-from typing import Any
+from contextvars import ContextVar
+from typing import Any, Iterator
 
 from nichebench.utils.io import strip_think_tags
 
@@ -56,10 +58,45 @@ try:
     import litellm
 
     LITELLM_AVAILABLE = True
-    LITELLM_MODULE = litellm
+    LITELLM_MODULE: Any = litellm
 except Exception:  # pragma: no cover - optional dependency
     LITELLM_AVAILABLE = False
     LITELLM_MODULE = None
+
+
+_app_capture_ctx: ContextVar[Any] = ContextVar("app_capture", default=None)
+
+
+def _current_app_capture() -> Any:
+    """Return the capture session bound to this thread, or ``None``.
+
+    Thread-scoped on purpose: parallel task execution must never leak one
+    task's capture lane into another's judge call.
+    """
+    return _app_capture_ctx.get()
+
+
+@contextlib.contextmanager
+def app_capture_scope(session: Any, lane: str = "judge", label: str = "") -> Iterator[None]:
+    """Bind ``session`` as the application-boundary capture for this thread.
+
+    The scope is entered and left by the owning runtime flow, so the capture
+    state is reset in a ``finally`` and no process-global ``litellm.api_base``
+    is touched. Non-runtime callers simply never enter the scope, in which case
+    nothing is recorded.
+    """
+    token = _app_capture_ctx.set(session)
+    previous_lane = getattr(session, "current_lane", "judge")
+    previous_label = getattr(session, "current_label", "")
+    session_ctx = getattr(session, "lane_context", None)
+    try:
+        if callable(session_ctx):
+            session_ctx(lane, label)
+        yield
+    finally:
+        _app_capture_ctx.reset(token)
+        if callable(session_ctx):
+            session_ctx(previous_lane, previous_label)
 
 
 class LiteLLMClient:
@@ -258,7 +295,24 @@ class LiteLLMClient:
                     completion_args["custom_llm_provider"] = "openai"
                     completion_args["model"] = model_for_api
 
-                response = LITELLM_MODULE.completion(**completion_args)
+                capture = _current_app_capture()
+                if capture is not None:
+                    self._record_capture_request(capture, model, completion_args)
+
+                try:
+                    response = LITELLM_MODULE.completion(**completion_args)
+                except Exception as exc:
+                    if capture is not None:
+                        capture.record_application_error(
+                            model=model,
+                            error_type=type(exc).__name__,
+                        )
+                    raise
+
+                if capture is not None:
+                    # Recorded before the harness strips the response into
+                    # ``output``, so the public object stays intact.
+                    capture.record_application_response(model=model, response=response)
 
                 # Handle streaming vs non-streaming responses
                 if use_streaming:
@@ -301,6 +355,23 @@ class LiteLLMClient:
         # behavior should be updated to expect an explicit error marker.
         time.sleep(0.01)
         return {"model": model, "output": "[Error: model did not return a response]"}
+
+    @staticmethod
+    def _record_capture_request(capture: Any, model: str, completion_args: dict[str, Any]) -> None:
+        """Hand the sanitised call arguments to the active capture session.
+
+        Credential-shaped arguments are removed before they reach the recorder,
+        and the recorder marks the artifact redacted rather than presenting it as
+        an exact copy. The response object is captured separately by the caller
+        so both sides of the boundary land in the journal.
+        """
+        from nichebench.execution.runtime.capture.scrub import redact_credential_keys
+
+        known = getattr(capture, "known_credentials", None)
+        key = completion_args.get("api_key")
+        if isinstance(known, list) and isinstance(key, str) and key and key not in known:
+            known.append(key)
+        capture.note_app_call(model=model, arguments=redact_credential_keys(completion_args))
 
     def _filter_model_parameters(self, model: str, parameters: dict) -> dict:
         """Filter parameters based on model capabilities to avoid API errors.

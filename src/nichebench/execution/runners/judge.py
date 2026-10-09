@@ -200,6 +200,7 @@ class JudgeRunner:
         # Create appropriate metric and evaluate
         judge_output: Dict[str, Any] = {}
         passed = False
+        metric: Any
 
         if category == "quiz":
             metric = DeepEvalQuizMetric(

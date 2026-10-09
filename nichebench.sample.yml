@@ -67,6 +67,25 @@ evaluation:
   save_raw_outputs: true        # Include raw model outputs
   parallelism: 1                # Number of parallel test executions (1 = sequential)
 
+  # ------------------------------------------------------------------
+  # Runtime task full-trace capture (opt-in, off by default)
+  # ------------------------------------------------------------------
+  # When enabled, a runtime run writes an event journal with the exact HTTP
+  # bytes sent to / received from the pinned MiniMax endpoint, the agent's
+  # stdout/stderr byte streams, the full agent event timeline, and a
+  # WAL-consistent snapshot of OpenCode's session store.
+  #
+  # Requirements and limits:
+  # - Only the `minimax` provider with runtime_opencode_api_base
+  #   https://api.minimax.io/v1 is supported. Any other route fails loudly.
+  # - runtime_artifact_retention must be `standard` or `full`; `minimal` cannot
+  #   guarantee a complete journal and is rejected.
+  # - The disk quota is a hard stop, not a truncation: exceeding it fails the
+  #   run and marks the capture incomplete rather than silently dropping data.
+  # See docs/runtime/runtime-tracing.md.
+  runtime_capture_enable: false
+  runtime_capture_disk_quota_bytes: 4294967296   # 4 GiB per runtime task
+
 # Network and reliability settings
 network:
   timeout: 600                  # Request timeout in seconds (increased for large token generation)
@@ -209,6 +228,7 @@ profiles:
         max_tokens: 4096
     evaluation:
       runtime_opencode_api_base: "https://api.minimax.io/v1"
+      runtime_opencode_model_config_file: "opencode.jsonc"
       runtime_opencode_context_limit: 1048576
       runtime_opencode_output_limit: 32768
       runtime_opencode_model_limits:
@@ -232,6 +252,7 @@ profiles:
         max_tokens: 4096
     evaluation:
       runtime_opencode_api_base: "https://api.minimax.io/v1"
+      runtime_opencode_model_config_file: "opencode.jsonc"
       runtime_opencode_context_limit: 1048576
       runtime_opencode_output_limit: 32768
       runtime_opencode_model_limits:
@@ -265,4 +286,25 @@ profiles:
           output: 32768
         MiniMax-M2.7:
           context: 204800
+          output: 32768
+
+  minimax_m31:
+    mut:
+      provider: "minimax"
+      model: "MiniMax-M3.1-Flash-Preview"
+      parameters:
+        temperature: 0.0
+        max_tokens: 32768
+    judge:
+      provider: "minimax"
+      model: "MiniMax-M2.7"
+      parameters:
+        temperature: 0.3
+        max_tokens: 8192
+    evaluation:
+      runtime_opencode_api_base: "https://api.minimax.io/v1"
+      runtime_opencode_model_config_file: "opencode.jsonc"
+      runtime_opencode_model_limits:
+        MiniMax-M3.1-Flash-Preview:
+          context: 1000000
           output: 32768

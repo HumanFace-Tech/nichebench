@@ -1,4 +1,5 @@
 """Unit tests for RuntimeScorer.compute_hybrid_score."""
+import json
 from pathlib import Path
 
 import pytest
@@ -83,6 +84,48 @@ class TestComputeHybridScore:
 
 
 class TestRequiredCommandMatching:
+    @pytest.mark.parametrize("event_type", ["tool_use", "tool"])
+    def test_json_run_log_matches_completed_bash_command(self, tmp_path: Path, event_type: str) -> None:
+        command = "ddev drush cex --yes 2>&1 | tail -1"
+        event = {
+            "type": event_type,
+            "part": {
+                "type": "tool",
+                "tool": "bash",
+                "state": {"status": "completed", "input": {"command": command}},
+            },
+        }
+        run_log = tmp_path / "run.log"
+        run_log.write_text("STDOUT:\n" + json.dumps(event) + "\nSTDERR:\n", encoding="utf-8")
+        scorer = RuntimeScorer(workspace_path=tmp_path, drush_cmd=["ddev", "drush"], run_log_path=run_log)
+        [result] = scorer.run_deterministic_checks(
+            [{"name": "cex", "type": "required_command", "command": "ddev drush cex --yes"}]
+        )
+        assert result.passed is True
+
+    @pytest.mark.parametrize("status", ["pending", "running", "error"])
+    def test_json_run_log_ignores_uncompleted_bash_calls(self, status: str) -> None:
+        event = {
+            "type": "tool_use",
+            "part": {
+                "tool": "bash",
+                "state": {"status": status, "input": {"command": "ddev drush cr"}},
+            },
+        }
+        assert RuntimeScorer._extract_run_log_commands(json.dumps(event)) == []
+
+    @pytest.mark.parametrize(
+        "event",
+        [
+            {"type": "text", "part": {"text": "Ran: ddev drush cr"}},
+            {"type": "tool_use", "part": {"tool": "read", "state": {"status": "completed"}}},
+            {"type": "tool_use", "part": {"tool": "bash", "state": {"status": "completed", "input": []}}},
+            [],
+        ],
+    )
+    def test_json_run_log_ignores_non_command_events(self, event: object) -> None:
+        assert RuntimeScorer._extract_run_log_commands(json.dumps(event)) == []
+
     def test_run_log_fallback_matches_actual_bash_command(self, tmp_path: Path) -> None:
         run_log = tmp_path / "run.log"
         run_log.write_text(

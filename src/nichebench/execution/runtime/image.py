@@ -203,7 +203,7 @@ def resolve_effective_cage_image(
         - ``runtime_container_enable_ddev`` (``bool``) — default ``True``
         - ``runtime_container_image`` (``str``) — base image tag
         - ``runtime_container_ddev_image`` (``str``) — derived image tag;
-          default ``"nichebench/opencode-ddev:1.14.25"``
+          default ``"nichebench/opencode-ddev:1.18.3"``
         - ``runtime_container_ddev_auto_build`` (``bool``) — default ``True``
 
     probe:
@@ -230,7 +230,7 @@ def resolve_effective_cage_image(
     """
     enable_ddev = bool(runtime_config.get("runtime_container_enable_ddev", True))
     base_image = str(runtime_config.get("runtime_container_image", ""))
-    ddev_image = str(runtime_config.get("runtime_container_ddev_image", "nichebench/opencode-ddev:1.14.25"))
+    ddev_image = str(runtime_config.get("runtime_container_ddev_image", "nichebench/opencode-ddev:1.18.3"))
     auto_build = bool(runtime_config.get("runtime_container_ddev_auto_build", True))
 
     if not enable_ddev:

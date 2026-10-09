@@ -48,7 +48,7 @@ class NicheBenchConfig:
                 "parallelism": 1,  # Default to sequential execution
                 "trials": 1,
                 "runtime_mode": "cage",
-                "runtime_container_image": "ghcr.io/anomalyco/opencode:1.14.25",
+                "runtime_container_image": "ghcr.io/anomalyco/opencode:1.18.3",
                 "runtime_container_user": "1000:1000",
                 "runtime_container_read_only": False,
                 "runtime_timeout_minutes": 60,
@@ -59,7 +59,7 @@ class NicheBenchConfig:
                 "runtime_artifact_retention": "standard",
                 "runtime_keep_workspaces": False,
                 "runtime_container_enable_ddev": True,
-                "runtime_container_ddev_image": "nichebench/opencode-ddev:1.14.25",
+                "runtime_container_ddev_image": "nichebench/opencode-ddev:1.18.3",
                 "runtime_container_ddev_auto_build": True,
                 "runtime_tool_allowlist_enforce": False,
                 "runtime_tool_retry_attempts": 3,
@@ -73,6 +73,10 @@ class NicheBenchConfig:
                 "runtime_smoke_preflight_timeout_seconds": 180,
                 "runtime_hints_enabled": False,
                 "runtime_hints_file": None,
+                # Full-trace capture is opt-in: it changes the cage transport
+                # route and only supports the pinned minimax_m3 endpoint.
+                "runtime_capture_enable": False,
+                "runtime_capture_disk_quota_bytes": 4 * 1024 * 1024 * 1024,
             },
             "network": {"timeout": 600, "retry_attempts": 5, "retry_delay": 3.0},
             "results": {"auto_report": True, "save_format": "jsonl", "timestamp_format": "%Y%m%d_%H%M%S"},

@@ -22,6 +22,8 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
+import copy
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -119,3 +121,67 @@ def stage_cleanup(trace: RuntimeTrace) -> None:
         trace.stage_end(open_stage, "failed", {"error": "stage left open before cleanup"})
     trace.stage_start("cleanup")
     trace.stage_end("cleanup", "passed")
+
+
+def attach_capture_reference(capture: Any, trace: RuntimeTrace, result: Optional[TestResult] = None) -> None:
+    """Attach the small capture descriptor to the runtime trace and artifacts.
+
+    The descriptor points at the archive on disk; no payload is inlined, so
+    ``runtime_trace.json`` and ``details.jsonl`` stay small while the artifact
+    folder remains the visible entry point to the full journal.
+    """
+    if capture is None:
+        return
+    reference = capture.result_reference()
+    if not reference:
+        return
+    # The early task pointer predates judge capture. Replace every result entry
+    # only after finalise(None), from the same published descriptor snapshot.
+    if result is not None:
+        if result.runtime_artifacts is None:
+            result.runtime_artifacts = {}
+        result.runtime_artifacts["capture.json"] = copy.deepcopy(reference)
+        metadata = result.runtime_artifacts.setdefault("metadata.json", {})
+        if isinstance(metadata, dict):
+            metadata["runtime_capture"] = copy.deepcopy(reference)
+    with contextlib.suppress(Exception):
+        trace.attach_capture(copy.deepcopy(reference))
+
+
+def finalize_capture(capture: Any, current_stage: str) -> None:
+    """Finalise the capture session before any state is deleted.
+
+    Runs first in the ``finally`` block of ``execute_runtime_test`` so that a
+    timeout, watchdog kill, non-zero exit, poll error, or ``KeyboardInterrupt``
+    still leaves a complete archive. Ordering matters: the capture is finalised
+    *before* ``cleanup_workspace`` removes the task workspace and *before* the
+    trace is finalised, so the descriptor's completion state reflects reality.
+
+    Never raises — a capture failure must not mask the real test result.
+    """
+    if capture is None:
+        return
+    try:
+        if current_stage != "artifact_finalization":
+            capture.note(f"run_ended_in_stage:{current_stage}")
+        capture.finalise(None, f"stage_end:{current_stage}")
+    except Exception as exc:  # noqa: BLE001 - finalisation must never raise
+        import sys
+
+        print(
+            f"[finalize_capture] WARNING: capture finalisation failed and was suppressed: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+
+
+def application_capture_scope(capture: Any, lane: str = "judge", label: str = "") -> Any:
+    """Bind the capture session as the application-boundary recorder for this thread.
+
+    A no-op context manager when capture is disabled, so the classic task paths
+    and the non-capture runtime path keep their current behaviour unchanged.
+    The scope resets in a ``finally`` and never touches ``litellm.api_base``.
+    """
+    from nichebench.providers.litellm_client import app_capture_scope
+
+    return app_capture_scope(capture, lane=lane, label=label)

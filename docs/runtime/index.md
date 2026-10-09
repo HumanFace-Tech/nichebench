@@ -13,6 +13,8 @@ Canonical documentation for `drupal_runtime` agentic tasks.
 | [Smoke Tests](./runtime-smoke-tests.md) | End-to-end smoke procedure, `runtime_smoke.py`, exit codes, JSON schema |
 | [Diagnostics Playbook](./runtime-diagnostics-playbook.md) | Failure triage, artifact inspection order, troubleshooting examples, report template |
 | [Reporting & Scoring](./runtime-reporting-scoring.md) | Deterministic %, Judge %, Hybrid %, critical gate, Rich output table, artifact inventory |
+| [MiniMax Model Metadata](./minimax-model-metadata.md) | Backported MiniMax M3/M3.1 declarations, provenance, exclusions, profile opt-in |
+| [Runtime Tracing](./runtime-tracing.md) | Full-trace capture: exact HTTP bytes, agent timeline, session-store archive, boundaries, privacy |
 
 ## Enable Runtime Tasks
 

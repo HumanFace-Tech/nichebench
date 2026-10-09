@@ -29,6 +29,7 @@ Check execution boundaries
 """
 
 import fnmatch
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -227,9 +228,25 @@ class RuntimeScorer:
         commands: List[str] = []
         for raw_line in run_log_text.splitlines():
             line = cls._strip_ansi(raw_line).strip()
-            if not line.startswith("$ "):
-                continue
-            command = line[2:].strip()
+            if line.startswith("$ "):
+                command = line[2:].strip()
+            else:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict) or event.get("type") not in ("tool_use", "tool"):
+                    continue
+                part = event.get("part")
+                if not isinstance(part, dict) or part.get("tool") != "bash":
+                    continue
+                state = part.get("state")
+                if not isinstance(state, dict) or state.get("status") != "completed":
+                    continue
+                tool_input = state.get("input")
+                if not isinstance(tool_input, dict) or not isinstance(tool_input.get("command"), str):
+                    continue
+                command = tool_input["command"].strip()
             if command:
                 commands.append(command)
         return commands

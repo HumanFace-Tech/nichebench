@@ -63,7 +63,7 @@ Stage evidence is recorded in `runtime_trace.json` with `status: passed | failed
 
 Runtime tasks default to `cage` mode. The cage is a Docker container that:
 
-- Uses a DDEV-capable runtime image (default: `nichebench/opencode-ddev:1.14.25`)
+- Uses a DDEV-capable runtime image (default: `nichebench/opencode-ddev:1.18.3`)
 - Auto-builds a derived image with ddev/docker CLI if `runtime_container_ddev_auto_build: true`
 - Mounts explicit audit islands (input, output-trace, ops)
 - Mounts the Docker socket (`/var/run/docker.sock`) for in-agent `ddev` commands

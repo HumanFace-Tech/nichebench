@@ -192,7 +192,7 @@ evaluation:
   runtime_keep_workspaces: false
   runtime_container_enable_ddev: true
   runtime_container_ddev_auto_build: true
-  runtime_container_ddev_image: nichebench/opencode-ddev:1.14.25
+  runtime_container_ddev_image: nichebench/opencode-ddev:1.18.3
 ```
 
 ---

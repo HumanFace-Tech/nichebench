@@ -7,7 +7,7 @@ JSON with per-criterion pass/fail results.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from deepeval.metrics import BaseMetric
 from deepeval.test_case import LLMTestCase
@@ -35,7 +35,7 @@ class DeepEvalCodeGenerationMetric(BaseMetric):
         async_mode: bool = False,
     ):
         self.threshold = threshold
-        self.model = model
+        self.model = cast(Any, model)
         self.judge_model = judge_model or model
         self.judge_params = judge_params or {}
         self.include_reason = include_reason

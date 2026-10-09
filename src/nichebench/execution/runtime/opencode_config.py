@@ -23,6 +23,17 @@ Config synthesis purpose
 This is the only file the cage reads at startup; it encodes all runtime
 decisions (provider, model, token limits, permission grants, system prompt).
 
+Model metadata source
+---------------------
+``runtime_opencode_model_config_file`` points at a host-side OpenCode config
+file (e.g. the project ``opencode.jsonc``) that declares model metadata the
+pinned cage runtime does not ship with. Only the selected entry
+``provider[<effective provider key>].models[<selected model id>]`` is read,
+and only the fields listed in ``SUPPORTED_MODEL_METADATA_FIELDS`` are
+propagated. Everything else in that file — permissions, agents, plugins,
+provider options, credentials — is discarded so nothing can leak into the
+cage. Runtime token limits are applied on top of the imported entry.
+
 Ownership boundaries
 -------------------
 - Does NOT own workspace lifecycle (see ``workspace.py``)
@@ -32,6 +43,7 @@ Ownership boundaries
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -63,6 +75,23 @@ OPENCODE_NATIVE_PROVIDERS: frozenset[str] = frozenset(
         "ollama",
         "cerebras",
     }
+)
+
+SUPPORTED_MODEL_METADATA_FIELDS: tuple[str, ...] = (
+    "id",
+    "name",
+    "family",
+    "release_date",
+    "attachment",
+    "reasoning",
+    "temperature",
+    "tool_call",
+    "interleaved",
+    "cost",
+    "limit",
+    "modalities",
+    "experimental",
+    "status",
 )
 
 
@@ -179,6 +208,66 @@ def read_workspace_system_prompt(workspace_path: Path) -> Optional[str]:
     return None
 
 
+def load_model_metadata_from_config_file(
+    config_file: str,
+    effective_provider_key: str,
+    opencode_model_id: str,
+) -> Dict[str, Any]:
+    """Load model metadata for one model from a host-side OpenCode config file.
+
+    Reads only ``provider[<effective_provider_key>].models[<opencode_model_id>]``
+    and keeps only fields in :data:`SUPPORTED_MODEL_METADATA_FIELDS`. The path is
+    resolved independently of the task workspace so a project-level declaration
+    can be imported without being mounted into the cage.
+
+    Raises:
+        ValueError: If the file is missing, is not valid JSON, is not a JSON
+            object, or lacks the expected provider/model structure.
+    """
+    source = Path(config_file).expanduser()
+    if not source.is_absolute():
+        source = (Path.cwd() / source).resolve()
+
+    if not source.is_file():
+        raise ValueError(f"runtime_opencode_model_config_file not found: {source}")
+
+    try:
+        raw = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Could not read runtime_opencode_model_config_file {source}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"runtime_opencode_model_config_file {source} is not valid JSON: {exc}") from exc
+
+    if not isinstance(raw, dict):
+        raise ValueError(f"runtime_opencode_model_config_file {source} must contain a JSON object at the root")
+
+    providers = raw.get("provider")
+    if not isinstance(providers, dict):
+        raise ValueError(f"runtime_opencode_model_config_file {source} has no 'provider' object")
+
+    provider_block = providers.get(effective_provider_key)
+    if not isinstance(provider_block, dict):
+        raise ValueError(
+            f"runtime_opencode_model_config_file {source} has no provider entry for '{effective_provider_key}'"
+        )
+
+    models = provider_block.get("models")
+    if not isinstance(models, dict):
+        raise ValueError(
+            f"runtime_opencode_model_config_file {source} provider '{effective_provider_key}' has no 'models' object"
+        )
+
+    entry = models.get(opencode_model_id)
+    if not isinstance(entry, dict):
+        raise ValueError(
+            f"runtime_opencode_model_config_file {source} provider '{effective_provider_key}' "
+            f"has no model entry for '{opencode_model_id}'"
+        )
+
+    metadata = copy.deepcopy(entry)
+    return {key: value for key, value in metadata.items() if key in SUPPORTED_MODEL_METADATA_FIELDS}
+
+
 def write_cage_opencode_json(
     workspace_host_path: Path,
     opencode_provider: str,
@@ -219,18 +308,29 @@ def write_cage_opencode_json(
         ratio = float(cfg.get("runtime_opencode_output_ratio", 0.5))
         output_limit = int(int(context_limit) * ratio)
 
+    effective_key = derive_cage_npm_provider_key(opencode_provider, cfg) if api_base else opencode_provider
+
     model_entry: Dict[str, Any] = {}
+    model_config_file = cfg.get("runtime_opencode_model_config_file")
+    if model_config_file:
+        model_entry = load_model_metadata_from_config_file(
+            str(model_config_file),
+            effective_key,
+            opencode_model_id,
+        )
+
     if context_limit is not None or output_limit is not None:
         limit: Dict[str, Any] = {}
         if context_limit is not None:
             limit["context"] = int(context_limit)
         if output_limit is not None:
             limit["output"] = int(output_limit)
-        model_entry["limit"] = limit
+        merged_limit = dict(model_entry["limit"]) if isinstance(model_entry.get("limit"), dict) else {}
+        merged_limit.update(limit)
+        model_entry["limit"] = merged_limit
 
     if api_base:
         # npm-based @ai-sdk/openai-compatible provider block.
-        provider_key = derive_cage_npm_provider_key(opencode_provider, cfg)
         npm = str(cfg.get("runtime_opencode_provider_npm", "@ai-sdk/openai-compatible"))
         provider_options: Dict[str, Any] = {"baseURL": api_base}
 
@@ -245,16 +345,14 @@ def write_cage_opencode_json(
             provider_options["setCacheKey"] = True
 
         provider_block: Dict[str, Any] = {
-            "name": provider_key,
+            "name": effective_key,
             "npm": npm,
             "models": {opencode_model_id: model_entry},
             "options": provider_options,
         }
-        effective_key = provider_key
     else:
         # Native provider — simple model registration.
         provider_block = {"models": {opencode_model_id: model_entry}}
-        effective_key = opencode_provider
 
     # Optional compaction block.
     compaction_block: Dict[str, Any] = {}

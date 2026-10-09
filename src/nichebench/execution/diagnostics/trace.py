@@ -88,6 +88,7 @@ class RuntimeTrace:
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.ended_at: Optional[str] = None
         self.stages: List[Dict[str, Any]] = []
+        self.capture_ref: Dict[str, Any] = {}
         self._open_stage: Optional[str] = None
 
     def stage_start(self, stage: str, evidence: Optional[Dict[str, Any]] = None) -> None:
@@ -121,17 +122,28 @@ class RuntimeTrace:
                 return
         self._open_stage = None
 
+    def attach_capture(self, capture_ref: Dict[str, Any]) -> None:
+        """Attach a capture descriptor reference to the trace payload.
+
+        Only the reference travels here — the archive itself stays on disk and is
+        never inlined into ``runtime_trace.json`` or ``details.jsonl``.
+        """
+        self.capture_ref = dict(capture_ref)
+
     def finalize(self) -> Dict[str, Any]:
         """Return a serialisable snapshot of the completed trace."""
         if self._open_stage is not None:
             raise ValueError(f"finalize() called with unclosed stage {self._open_stage!r}")
         self.ended_at = datetime.now(timezone.utc).isoformat()
-        return {
+        payload: Dict[str, Any] = {
             "test_id": self.test_id,
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "stages": self.stages,
         }
+        if self.capture_ref:
+            payload["capture"] = self.capture_ref
+        return payload
 
 
 def classify_runtime_failure(error: Optional[str], failed_critical_check: bool, failed_stage: str) -> RuntimeFailure:

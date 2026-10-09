@@ -23,7 +23,7 @@ caller-side reset logic.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Optional, cast
 
 if TYPE_CHECKING:
     from langchain_litellm import ChatLiteLLM
@@ -142,8 +142,8 @@ class LangGraphCodeAgent:
         workflow = StateGraph(PlannerState)
 
         # Add nodes
-        workflow.add_node("planner", create_planner_node(self.llm, progress_callback))
-        workflow.add_node("solver", create_solver_node(self.llm, progress_callback))
+        workflow.add_node("planner", cast(Any, create_planner_node(self.llm, progress_callback)))
+        workflow.add_node("solver", cast(Any, create_solver_node(self.llm, progress_callback)))
 
         # Set entry point
         workflow.add_edge(START, "planner")

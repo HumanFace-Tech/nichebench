@@ -376,21 +376,27 @@ class TestSaveRuntimeArtifacts:
         assert (outdir / "trajectory.json").exists()
 
     def test_artifact_redaction_removes_secret_values(self, tmp_path):
+        """Credential keys and credential *formats* are scrubbed; metrics are not.
+
+        Numeric usage counters and ordinary ``token``-named fields are data, not
+        credentials, and must survive so the artifact stays analysable.
+        """
         artifacts = {
             "metadata.json": {
                 "openai_api_key": "sk-123",
                 "openrouter_api_key": "or-secret",
                 "xai_api_key": "xai-secret",
-                "nested": {"token": "abc"},
+                "nested": {"access_token": "abc", "token_count": 4096},
+                "usage": {"input_tokens": 1234, "output_tokens": 56, "cost": 0.0},
             },
             "run.log": "OPENAI_API_KEY=sk-secret\nAuthorization: Bearer abc123",
             "checks.json": {"deterministic": [{"details": {"api_key": "value"}}]},
-            "final.diff": "+ token=abcd",
+            "final.diff": "+ token=abcd\n+ MAX_TOKENS=32768",
             "runtime_trace.json": {"stages": [{"evidence": {"password": "x"}}]},
             "trajectory.json": {
                 "messages": [
                     {"content": '{"apiKey":"sk-json","Authorization":"Bearer json-token"}'},
-                    {"content": "token: plain-token"},
+                    {"content": "the agent read config token: settings.get('token')"},
                 ]
             },
         }
@@ -405,11 +411,14 @@ class TestSaveRuntimeArtifacts:
         checks = json.loads((outdir / "checks.json").read_text(encoding="utf-8"))
         runtime_trace = json.loads((outdir / "runtime_trace.json").read_text(encoding="utf-8"))
         trajectory = json.loads((outdir / "trajectory.json").read_text(encoding="utf-8"))
+        final_diff = (outdir / "final.diff").read_text(encoding="utf-8")
 
         assert metadata["openai_api_key"] == "[REDACTED]"
         assert metadata["openrouter_api_key"] == "[REDACTED]"
         assert metadata["xai_api_key"] == "[REDACTED]"
-        assert metadata["nested"]["token"] == "[REDACTED]"
+        assert metadata["nested"]["access_token"] == "[REDACTED]"
+        assert metadata["nested"]["token_count"] == 4096
+        assert metadata["usage"] == {"input_tokens": 1234, "output_tokens": 56, "cost": 0.0}
         assert "sk-secret" not in run_log
         assert "Bearer abc123" not in run_log
         assert checks["deterministic"][0]["details"]["api_key"] == "[REDACTED]"
@@ -417,7 +426,8 @@ class TestSaveRuntimeArtifacts:
         trajectory_text = json.dumps(trajectory)
         assert "sk-json" not in trajectory_text
         assert "json-token" not in trajectory_text
-        assert "plain-token" not in trajectory_text
+        assert "settings.get('token')" in trajectory_text
+        assert final_diff == "+ token=abcd\n+ MAX_TOKENS=32768"
 
     def test_minimal_mode_saves_metadata_only(self, tmp_path):
         artifacts = {

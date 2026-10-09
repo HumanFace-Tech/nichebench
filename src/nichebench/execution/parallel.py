@@ -268,11 +268,12 @@ def _execute_tests_threaded(
                     worker_id = index % parallelism
                     runner.finish_worker_test(worker_id, result.test_case.id, result.passed)
                     runner.advance_progress(1)
-                    runner.progress.update(
-                        runner.main_task,
-                        description=f"[cyan]Running {runner.framework}/{runner.category}[/cyan] - "
-                        f"✅ {runner.passed_tests} passed, ❌ {runner.failed_tests} failed",
-                    )
+                    if runner.main_task is not None:
+                        runner.progress.update(
+                            runner.main_task,
+                            description=f"[cyan]Running {runner.framework}/{runner.category}[/cyan] - "
+                            f"✅ {runner.passed_tests} passed, ❌ {runner.failed_tests} failed",
+                        )
 
     final_results: List[TestResult] = [r for r in parallel_results if r is not None]
     return final_results

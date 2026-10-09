@@ -62,6 +62,20 @@ def save_runtime_artifacts(
             trajectory = redact_func(trajectory)
             (outdir / "trajectory.json").write_text(json.dumps(trajectory, indent=2), encoding="utf-8")
 
+    # --- Capture descriptor reference ---
+    # The capture archive itself is never copied here; only a pointer is written
+    # so the artifact folder is the visible entry point to the full journal.
+    capture_ref = artifacts.get("capture.json")
+    if capture_ref:
+        outdir.mkdir(parents=True, exist_ok=True)
+        if isinstance(capture_ref, dict):
+            (outdir / "capture.json").write_text(
+                json.dumps(capture_ref, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        else:
+            (outdir / "capture.json").write_text(str(capture_ref), encoding="utf-8")
+
     # --- Metadata ---
     if "metadata.json" in artifacts:
         metadata = artifacts["metadata.json"]

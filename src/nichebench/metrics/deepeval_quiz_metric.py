@@ -6,7 +6,7 @@ delegating the actual LLM-as-judge work to our existing adapter.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional, cast
 
 from deepeval.metrics import BaseMetric
 from deepeval.test_case import LLMTestCase
@@ -34,7 +34,7 @@ class DeepEvalQuizMetric(BaseMetric):
     ):
         # Lazy import guard - keep ctor cheap
         self.threshold = threshold
-        self.model = model
+        self.model = cast(Any, model)
         # Which model to use for the judge LLM (if provided). If None we reuse
         # `model` as a sensible default but keep the param explicit.
         self.judge_model: str = judge_model or model or "openai/gpt-5"

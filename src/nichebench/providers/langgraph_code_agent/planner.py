@@ -67,7 +67,7 @@ def create_planner_node(
 
             # Use the actual CODE_AGENT planner prompt with simplified output format instruction
             planning_messages = [
-                SystemMessage(content=CODE_AGENT_PLANNER_PROMPT),
+                SystemMessage(content=CODE_AGENT_PLANNER_PROMPT or ""),
                 HumanMessage(
                     content=planner_request_template.format(
                         original_task=state["original_task"],
@@ -79,7 +79,8 @@ def create_planner_node(
             try:
                 logger.info("🚀 Calling LLM for planning...")
                 response = llm.invoke(planning_messages)
-                plan_text = response.content if hasattr(response, "content") else str(response)
+                raw_plan_text = response.content if hasattr(response, "content") else str(response)
+                plan_text = raw_plan_text if isinstance(raw_plan_text, str) else str(raw_plan_text)
 
                 # Parse plan steps - extract only numbered steps from CODE_AGENT response
                 plan_steps: List[str] = _parse_plan_steps(plan_text)

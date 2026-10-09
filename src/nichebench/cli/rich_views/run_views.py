@@ -6,18 +6,10 @@ command logic (`run.py`) stays focused on orchestration.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TaskID,
-    TextColumn,
-    TimeElapsedColumn,
-)
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TaskID, TextColumn, TimeElapsedColumn
 
 
 def render_run_header(
@@ -79,8 +71,8 @@ class LiveTestRunner:
         )
 
         # Main task progress
-        self.main_task = None
-        self.current_task = None  # For sequential mode
+        self.main_task: Optional[TaskID] = None
+        self.current_task: Optional[TaskID] = None
         self.worker_tasks: Dict[int, TaskID] = {}  # For parallel mode: worker_id -> task_id
 
     def __enter__(self):

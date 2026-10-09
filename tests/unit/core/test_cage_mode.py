@@ -12,6 +12,7 @@ from nichebench.config.nichebench_config import NicheBenchConfig
 from nichebench.core.datamodel import TestCaseSpec
 from nichebench.core.profiles import resolve_profile
 from nichebench.execution.orchestrator import TestExecutor
+from nichebench.execution.runtime import opencode_config as runtime_opencode_config
 from nichebench.execution.runtime.scoring import ValidationError
 
 # ---------------------------------------------------------------------------
@@ -682,7 +683,7 @@ class TestCageModeDDEVImageFlow:
         cfg = NicheBenchConfig(config_path=cfg_path)
         eval_conf = cfg.get_evaluation_config()
         assert eval_conf["runtime_container_enable_ddev"] is True
-        assert eval_conf["runtime_container_ddev_image"] == "nichebench/opencode-ddev:1.14.25"
+        assert eval_conf["runtime_container_ddev_image"] == "nichebench/opencode-ddev:1.18.3"
         assert eval_conf["runtime_container_ddev_auto_build"] is True
 
     def test_config_ddev_flow_can_be_disabled(self, tmp_path):
@@ -2701,6 +2702,428 @@ class TestCageOpenCodeJsonGeneration:
         assert "my-local" in cfg["provider"]
         assert cfg["model"] == "my-local/my-model"
         assert cfg["provider"]["my-local"]["name"] == "my-local"
+
+
+_MODEL_SOURCE_CONFIG = {
+    "provider": {
+        "minimax": {
+            "npm": "@ai-sdk/anthropic",
+            "options": {"apiKey": "leaked-secret", "baseURL": "https://evil.invalid"},
+            "models": {
+                "MiniMax-M3": {
+                    "id": "MiniMax-M3",
+                    "name": "MiniMax-M3",
+                    "family": "minimax",
+                    "release_date": "2026-06-01",
+                    "attachment": True,
+                    "reasoning": True,
+                    "temperature": True,
+                    "tool_call": True,
+                    "reasoning_options": [{"type": "toggle"}],
+                    "open_weights": True,
+                    "canonical_model_id": "minimax/MiniMax-M3",
+                    "limit": {"context": 1048576, "output": 512000, "input": 900000},
+                    "modalities": {"input": ["text", "image", "video"], "output": ["text"]},
+                    "cost": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0},
+                },
+                "MiniMax-M3.1-Flash-Preview": {
+                    "id": "MiniMax-M3.1-Flash-Preview",
+                    "name": "MiniMax-M3.1-Flash-Preview",
+                    "family": "minimax",
+                    "release_date": "2026-09-27",
+                    "attachment": True,
+                    "reasoning": True,
+                    "temperature": True,
+                    "tool_call": True,
+                    "reasoning_options": [{"type": "effort", "values": ["low", "medium", "high"]}],
+                    "limit": {"context": 1000000, "output": 512000},
+                    "modalities": {"input": ["text", "image", "video"], "output": ["text"]},
+                    "cost": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0},
+                },
+                "MiniMax-M2.7": {"id": "MiniMax-M2.7", "limit": {"context": 204800, "output": 32768}},
+            },
+        },
+    },
+    "permission": {"*": "allow", "bash": "allow"},
+    "agent": {"build": {"prompt": "leaked interactive prompt"}},
+    "plugin": ["some-plugin"],
+    "instructions": ["leaked instructions"],
+}
+
+
+def _write_model_source(tmp_path, payload):
+    source = tmp_path / "model-source.jsonc"
+    source.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return source
+
+
+class TestCageModelMetadataConfigFile:
+    """Tests for runtime_opencode_model_config_file metadata import."""
+
+    def test_metadata_enters_npm_cage(self, tmp_path):
+        """Selected model metadata is merged into the npm-based cage provider block."""
+        source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="minimax",
+            opencode_model_id="MiniMax-M3",
+            api_base="https://api.minimax.io/v1",
+            runtime_config={"runtime_opencode_model_config_file": str(source)},
+        )
+        entry = json.loads(result.read_text())["provider"]["minimax"]["models"]["MiniMax-M3"]
+        assert entry["attachment"] is True
+        assert entry["reasoning"] is True
+        assert entry["temperature"] is True
+        assert entry["tool_call"] is True
+        assert entry["family"] == "minimax"
+        assert entry["modalities"] == {"input": ["text", "image", "video"], "output": ["text"]}
+
+    def test_metadata_enters_native_cage(self, tmp_path):
+        """Selected model metadata is merged for native (no api_base) providers too."""
+        source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="minimax",
+            opencode_model_id="MiniMax-M3",
+            runtime_config={"runtime_opencode_model_config_file": str(source)},
+        )
+        cfg = json.loads(result.read_text())
+        assert "npm" not in cfg["provider"]["minimax"]
+        entry = cfg["provider"]["minimax"]["models"]["MiniMax-M3"]
+        assert entry["attachment"] is True
+        assert entry["modalities"]["input"] == ["text", "image", "video"]
+
+    def test_metadata_uses_effective_provider_key(self, tmp_path):
+        """A custom npm provider name selects the matching provider entry."""
+        source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="llama-cpp",
+            opencode_model_id="MiniMax-M3",
+            api_base="http://localhost:8080/v1",
+            runtime_config={
+                "runtime_opencode_provider_name": "minimax",
+                "runtime_opencode_model_config_file": str(source),
+            },
+        )
+        cfg = json.loads(result.read_text())
+        assert cfg["model"] == "minimax/MiniMax-M3"
+        assert cfg["provider"]["minimax"]["models"]["MiniMax-M3"]["attachment"] is True
+
+    def test_runtime_limits_win_over_source_limits(self, tmp_path):
+        """Runtime context/output caps override the imported limit while other fields survive."""
+        source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="minimax",
+            opencode_model_id="MiniMax-M3",
+            api_base="https://api.minimax.io/v1",
+            runtime_config={
+                "runtime_opencode_model_config_file": str(source),
+                "runtime_opencode_model_limits": {"MiniMax-M3": {"context": 1048576, "output": 32768}},
+            },
+        )
+        entry = json.loads(result.read_text())["provider"]["minimax"]["models"]["MiniMax-M3"]
+        assert entry["limit"]["context"] == 1048576
+        assert entry["limit"]["output"] == 32768
+        assert entry["limit"]["input"] == 900000
+        assert entry["attachment"] is True
+
+    def test_runtime_limits_win_per_model(self, tmp_path):
+        """Each model keeps its own runtime cap and its own imported native limit."""
+        source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        runtime_config = {
+            "runtime_opencode_model_config_file": str(source),
+            "runtime_opencode_model_limits": {
+                "MiniMax-M3": {"context": 1048576, "output": 32768},
+                "MiniMax-M3.1-Flash-Preview": {"context": 1000000, "output": 32768},
+            },
+        }
+        expected = {
+            "MiniMax-M3": (1048576, 32768),
+            "MiniMax-M3.1-Flash-Preview": (1000000, 32768),
+        }
+        for model_id, (context, output) in expected.items():
+            result = TestExecutor._write_cage_opencode_json(
+                workspace_host_path=tmp_path,
+                opencode_provider="minimax",
+                opencode_model_id=model_id,
+                api_base="https://api.minimax.io/v1",
+                runtime_config=runtime_config,
+            )
+            entry = json.loads(result.read_text())["provider"]["minimax"]["models"][model_id]
+            assert entry["limit"]["context"] == context, model_id
+            assert entry["limit"]["output"] == output, model_id
+            assert entry["limit"]["output"] != 512000, model_id
+
+    def test_subscription_cost_is_transcribed_per_model(self, tmp_path):
+        """Token Plan all-zero cost reaches the cage for both models, not invented rates."""
+        source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        for model_id in ("MiniMax-M3", "MiniMax-M3.1-Flash-Preview"):
+            result = TestExecutor._write_cage_opencode_json(
+                workspace_host_path=tmp_path,
+                opencode_provider="minimax",
+                opencode_model_id=model_id,
+                api_base="https://api.minimax.io/v1",
+                runtime_config={"runtime_opencode_model_config_file": str(source)},
+            )
+            entry = json.loads(result.read_text())["provider"]["minimax"]["models"][model_id]
+            assert entry["cost"] == {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}, model_id
+            assert "context_over_200k" not in entry["cost"], model_id
+            assert "tiers" not in entry["cost"], model_id
+
+    def test_source_limits_survive_without_runtime_limits(self, tmp_path):
+        """Without runtime limits the imported limit block is preserved as declared."""
+        source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="minimax",
+            opencode_model_id="MiniMax-M3",
+            api_base="https://api.minimax.io/v1",
+            runtime_config={"runtime_opencode_model_config_file": str(source)},
+        )
+        entry = json.loads(result.read_text())["provider"]["minimax"]["models"]["MiniMax-M3"]
+        assert entry["limit"] == {"context": 1048576, "output": 512000, "input": 900000}
+
+    def test_only_selected_model_is_imported(self, tmp_path):
+        """Sibling model entries in the source file do not reach the cage."""
+        source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        for model_id in ("MiniMax-M3", "MiniMax-M3.1-Flash-Preview"):
+            result = TestExecutor._write_cage_opencode_json(
+                workspace_host_path=tmp_path,
+                opencode_provider="minimax",
+                opencode_model_id=model_id,
+                api_base="https://api.minimax.io/v1",
+                runtime_config={"runtime_opencode_model_config_file": str(source)},
+            )
+            models = json.loads(result.read_text())["provider"]["minimax"]["models"]
+            assert list(models) == [model_id]
+
+    def test_unsupported_fields_and_config_keys_cannot_leak(self, tmp_path):
+        """Unsupported model fields and unrelated config sections never reach the cage."""
+        source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="minimax",
+            opencode_model_id="MiniMax-M3",
+            api_base="https://api.minimax.io/v1",
+            runtime_config={"runtime_opencode_model_config_file": str(source)},
+        )
+        cfg = json.loads(result.read_text())
+        entry = cfg["provider"]["minimax"]["models"]["MiniMax-M3"]
+
+        for field in ("reasoning_options", "open_weights", "canonical_model_id", "last_updated", "description"):
+            assert field not in entry, f"{field} must not enter the cage config"
+
+        assert cfg["permission"]["*"] == "deny"
+        assert "leaked interactive prompt" not in json.dumps(cfg)
+        assert "leaked-secret" not in json.dumps(cfg)
+        assert "leaked instructions" not in json.dumps(cfg)
+        assert cfg["provider"]["minimax"]["npm"] == "@ai-sdk/openai-compatible"
+        assert cfg["provider"]["minimax"]["options"] == {"baseURL": "https://api.minimax.io/v1"}
+
+    def test_reasoning_options_dropped_for_both_models(self, tmp_path):
+        """Both models declare reasoning_options upstream; neither may reach the cage."""
+        source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        for model_id in ("MiniMax-M3", "MiniMax-M3.1-Flash-Preview"):
+            result = TestExecutor._write_cage_opencode_json(
+                workspace_host_path=tmp_path,
+                opencode_provider="minimax",
+                opencode_model_id=model_id,
+                api_base="https://api.minimax.io/v1",
+                runtime_config={"runtime_opencode_model_config_file": str(source)},
+            )
+            entry = json.loads(result.read_text())["provider"]["minimax"]["models"][model_id]
+            assert "reasoning_options" in _MODEL_SOURCE_CONFIG["provider"]["minimax"]["models"][model_id]
+            assert "reasoning_options" not in entry, model_id
+            assert entry["reasoning"] is True, model_id
+
+    def test_missing_config_file_raises(self, tmp_path):
+        """A configured but absent source file raises a meaningful ValueError."""
+        missing = tmp_path / "does-not-exist.jsonc"
+        with pytest.raises(ValueError, match="runtime_opencode_model_config_file not found"):
+            TestExecutor._write_cage_opencode_json(
+                workspace_host_path=tmp_path,
+                opencode_provider="minimax",
+                opencode_model_id="MiniMax-M3",
+                api_base="https://api.minimax.io/v1",
+                runtime_config={"runtime_opencode_model_config_file": str(missing)},
+            )
+
+    def test_malformed_json_raises(self, tmp_path):
+        """A source file that is not valid JSON raises a meaningful ValueError."""
+        broken = tmp_path / "broken.jsonc"
+        broken.write_text("{ not json", encoding="utf-8")
+        with pytest.raises(ValueError, match="is not valid JSON"):
+            TestExecutor._write_cage_opencode_json(
+                workspace_host_path=tmp_path,
+                opencode_provider="minimax",
+                opencode_model_id="MiniMax-M3",
+                api_base="https://api.minimax.io/v1",
+                runtime_config={"runtime_opencode_model_config_file": str(broken)},
+            )
+
+    def test_non_object_root_raises(self, tmp_path):
+        """A source file whose root is not a JSON object raises a meaningful ValueError."""
+        source = tmp_path / "list-root.json"
+        source.write_text("[]", encoding="utf-8")
+        with pytest.raises(ValueError, match="must contain a JSON object at the root"):
+            TestExecutor._write_cage_opencode_json(
+                workspace_host_path=tmp_path,
+                opencode_provider="minimax",
+                opencode_model_id="MiniMax-M3",
+                api_base="https://api.minimax.io/v1",
+                runtime_config={"runtime_opencode_model_config_file": str(source)},
+            )
+
+    def test_missing_provider_entry_raises(self, tmp_path):
+        """A provider key absent from the source file raises a meaningful ValueError."""
+        source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        with pytest.raises(ValueError, match="has no provider entry for 'other'"):
+            TestExecutor._write_cage_opencode_json(
+                workspace_host_path=tmp_path,
+                opencode_provider="minimax",
+                opencode_model_id="MiniMax-M3",
+                api_base="https://api.minimax.io/v1",
+                runtime_config={
+                    "runtime_opencode_provider_name": "other",
+                    "runtime_opencode_model_config_file": str(source),
+                },
+            )
+
+    def test_missing_model_entry_raises(self, tmp_path):
+        """A model id absent from the source file raises a meaningful ValueError."""
+        source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        with pytest.raises(ValueError, match="has no model entry for 'MiniMax-M9'"):
+            TestExecutor._write_cage_opencode_json(
+                workspace_host_path=tmp_path,
+                opencode_provider="minimax",
+                opencode_model_id="MiniMax-M9",
+                api_base="https://api.minimax.io/v1",
+                runtime_config={"runtime_opencode_model_config_file": str(source)},
+            )
+
+    def test_malformed_models_structure_raises(self, tmp_path):
+        """A provider entry without a models object raises a meaningful ValueError."""
+        source = _write_model_source(tmp_path, {"provider": {"minimax": {"npm": "@ai-sdk/anthropic"}}})
+        with pytest.raises(ValueError, match="has no 'models' object"):
+            TestExecutor._write_cage_opencode_json(
+                workspace_host_path=tmp_path,
+                opencode_provider="minimax",
+                opencode_model_id="MiniMax-M3",
+                api_base="https://api.minimax.io/v1",
+                runtime_config={"runtime_opencode_model_config_file": str(source)},
+            )
+
+    def test_relative_path_resolves_against_cwd(self, tmp_path, monkeypatch):
+        """A relative configured path resolves against the host working directory."""
+        _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        monkeypatch.chdir(tmp_path)
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="minimax",
+            opencode_model_id="MiniMax-M3",
+            api_base="https://api.minimax.io/v1",
+            runtime_config={"runtime_opencode_model_config_file": "model-source.jsonc"},
+        )
+        entry = json.loads(result.read_text())["provider"]["minimax"]["models"]["MiniMax-M3"]
+        assert entry["attachment"] is True
+
+    def test_source_file_is_not_copied_into_workspace(self, tmp_path):
+        """The configured source lives outside the task workspace and is not mounted."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        source = tmp_path / "model-source.jsonc"
+        _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=workspace,
+            opencode_provider="minimax",
+            opencode_model_id="MiniMax-M3",
+            api_base="https://api.minimax.io/v1",
+            runtime_config={"runtime_opencode_model_config_file": str(source)},
+        )
+        assert result == workspace / "opencode.json"
+        assert sorted(p.name for p in workspace.iterdir()) == ["opencode.json"]
+
+    def test_no_config_file_leaves_entry_empty(self, tmp_path):
+        """Without the key the model entry stays empty — no implicit file lookup."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="minimax",
+            opencode_model_id="MiniMax-M3",
+            api_base="https://api.minimax.io/v1",
+            runtime_config={},
+        )
+        cfg = json.loads(result.read_text())
+        assert cfg["provider"]["minimax"]["models"]["MiniMax-M3"] == {}
+
+    def test_project_opencode_jsonc_declares_backported_models(self):
+        """The project root opencode.jsonc stays pure JSON and declares the backported models."""
+        repo_root = Path(__file__).resolve().parents[3]
+        source = repo_root / "opencode.jsonc"
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        assert payload["$schema"] == "https://opencode.ai/config.json"
+        models = payload["provider"]["minimax"]["models"]
+        assert set(models) == {"MiniMax-M3", "MiniMax-M3.1-Flash-Preview"}
+        assert "options" not in payload["provider"]["minimax"]
+        assert set(payload) == {"$schema", "provider"}
+
+    def test_project_opencode_jsonc_declares_token_plan_records(self):
+        """Both models carry Token Plan limits and all-zero subscription cost."""
+        repo_root = Path(__file__).resolve().parents[3]
+        models = json.loads((repo_root / "opencode.jsonc").read_text(encoding="utf-8"))["provider"]["minimax"]["models"]
+        expected_limits = {
+            "MiniMax-M3": {"context": 1048576, "output": 512000},
+            "MiniMax-M3.1-Flash-Preview": {"context": 1000000, "output": 512000},
+        }
+        expected_release = {"MiniMax-M3": "2026-06-01", "MiniMax-M3.1-Flash-Preview": "2026-09-27"}
+        zero_cost = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+        for model_id, limit in expected_limits.items():
+            entry = models[model_id]
+            assert entry["id"] == model_id, model_id
+            assert entry["name"] == model_id, model_id
+            assert entry["family"] == "minimax", model_id
+            assert entry["release_date"] == expected_release[model_id], model_id
+            assert entry["limit"] == limit, model_id
+            assert entry["cost"] == zero_cost, model_id
+            assert entry["modalities"] == {"input": ["text", "image", "video"], "output": ["text"]}, model_id
+            for flag in ("attachment", "reasoning", "temperature", "tool_call"):
+                assert entry[flag] is True, f"{model_id}.{flag}"
+            assert "reasoning_options" not in entry, model_id
+            assert "interleaved" not in entry, model_id
+            assert "tiers" not in entry["cost"], model_id
+            assert "context_over_200k" not in entry["cost"], model_id
+
+    def test_project_opencode_jsonc_fields_are_supported_only(self):
+        """Every declared field is one the pinned cage runtime understands."""
+        repo_root = Path(__file__).resolve().parents[3]
+        models = json.loads((repo_root / "opencode.jsonc").read_text(encoding="utf-8"))["provider"]["minimax"]["models"]
+        for model_id, entry in models.items():
+            unsupported = set(entry) - set(runtime_opencode_config.SUPPORTED_MODEL_METADATA_FIELDS)
+            assert not unsupported, f"{model_id} declares unsupported fields: {sorted(unsupported)}"
+
+    def test_project_opencode_jsonc_matches_provenance_snapshot(self):
+        """Root declarations match the recorded upstream Token Plan snapshot exactly."""
+        repo_root = Path(__file__).resolve().parents[3]
+        models = json.loads((repo_root / "opencode.jsonc").read_text(encoding="utf-8"))["provider"]["minimax"]["models"]
+        snapshot = json.loads(
+            (repo_root / "docs" / "runtime" / "minimax-model-metadata.source.json").read_text(encoding="utf-8")
+        )
+        provenance = snapshot["_provenance"]
+        assert provenance["source_provider"] == "minimax-coding-plan"
+        assert provenance["snapshot_sha256"] == ("e43a7e794e4f76455431c6988875a6a1a330b42ece3b8293201e6c94f20ac32f")
+        assert provenance["upstream_opencode_pin"] == "v1.18.3 = 127bdb30784d508cc556c71a0f32b508a3061517"
+
+        for model_id, entry in models.items():
+            raw = snapshot[model_id]
+            assert entry["limit"] == raw["limit"], model_id
+            assert entry["cost"] == raw["cost"], model_id
+            assert entry["modalities"] == raw["modalities"], model_id
+            assert entry["release_date"] == raw["release_date"], model_id
+            for flag in ("attachment", "reasoning", "temperature", "tool_call"):
+                assert entry[flag] == raw[flag], f"{model_id}.{flag}"
+            assert "reasoning_options" not in entry and "reasoning_options" in raw, model_id
+            assert "interleaved" not in entry and "interleaved" not in raw, model_id
 
 
 # ---------------------------------------------------------------------------

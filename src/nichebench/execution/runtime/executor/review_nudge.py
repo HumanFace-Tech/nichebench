@@ -81,6 +81,7 @@ def run_review_nudge_pass(
     profile: Any,
     runtime_timeout_seconds: int,
     review_nudge: str,
+    capture: Any = None,
 ) -> Tuple[str, str, str, Dict[str, Any], Optional[str], Optional[Dict[str, Any]], Any]:
     """Execute the second MUT pass with review nudge as task_input_override.
 
@@ -108,6 +109,8 @@ def run_review_nudge_pass(
         profile=profile,
         timeout_seconds=runtime_timeout_seconds,
         task_input_override=review_nudge,
+        attempt_label="review_nudge",
+        capture=capture,
     )
 
 

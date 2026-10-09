@@ -136,6 +136,8 @@ def execute_retry_loop(
     run_container_task_fn: Any,
     parse_rejected_tool_attempts_fn: Any,
     max_retry_attempts: int,
+    attempt_label: str = "initial",
+    capture: Any = None,
 ) -> Tuple[str, str, str, Dict[str, Any], str, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """Execute the retry loop for container runtime tasks.
 
@@ -154,6 +156,10 @@ def execute_retry_loop(
         run_container_task_fn: Callable for ``_run_container_runtime_task``.
         parse_rejected_tool_attempts_fn: Callable for ``_parse_rejected_tool_attempts``.
         max_retry_attempts: Maximum number of retry attempts.
+        attempt_label: Capture label for the first attempt. Retries derive their
+            own labels (``retry:<reason>``) so every attempt owns an immutable
+            journal instead of overwriting the previous one.
+        capture: Optional capture session forwarded to every attempt.
 
     Returns:
         Tuple of (mut_output, user_input, run_log, island_topology, effective_image,
@@ -204,6 +210,8 @@ def execute_retry_loop(
             profile=profile,
             timeout_seconds=timeout_seconds,
             task_input_override=current_task_input_override,
+            attempt_label=f"retry:{retry_trigger_reason}",
+            capture=capture,
         )
         mut_output = mut_output_retry
         user_input = user_input_retry

@@ -1,5 +1,28 @@
 # NicheBench Release Notes
 
+## 0.2.1 — Runtime Capture Update
+
+> **2026-10-09**
+
+### What's New
+
+- **Opt-in runtime capture** — Durable, per-attempt event journals preserve observed MiniMax HTTP request/response bodies, OpenCode JSON events, process streams, and SQLite session snapshots outside disposable task workspaces.
+- **Failure-path preservation** — Capture finalizes on normal exit, nonzero exit, timeout, watchdog termination, and interruption. Incomplete streams and quota/storage failures are marked rather than reported as complete.
+- **Payload integrity and privacy controls** — Content-addressed payload blocks, checksums, private file permissions, credential-aware scrubbing, and a configurable per-task disk quota.
+- **Pinned MiniMax M3/M3.1 metadata** — Model declarations are backported into the pinned OpenCode cage without upgrading OpenCode or changing prompts, permissions, provider SDK, or scoring.
+- **Structured command observation** — Required-command checks now recognize completed Bash calls in OpenCode JSON logs as well as legacy command lines. Existing benchmark artifacts are not rewritten.
+- **Runtime and tooling pins** — Runtime defaults match the OpenCode 1.18.3 cage image. The development environment declares mypy 1.18.2, and CI uses Poetry 2.4.1 for the lockfile.
+
+### Known Limits
+
+- Runtime capture is opt-in and currently supports the MiniMax-compatible HTTP runtime route only.
+- It records provider-visible traffic and OpenCode/tool state, not provider-internal hidden reasoning or provider-side event ordering.
+- Interrupted, withheld, or redacted payloads are explicitly marked incomplete or non-exact. Unknown credentials embedded in arbitrary content cannot be guaranteed absent.
+- Full capture can use substantial disk space. The configured quota stops the run rather than silently truncating the archive.
+- Required-command matching remains textual; command aliases and task-pack lexical checks are not semantically re-evaluated in this release.
+
+---
+
 ## 0.2.0 — Runtime-Capable Release
 
 > **2026-07-15**
