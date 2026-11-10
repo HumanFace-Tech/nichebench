@@ -76,8 +76,8 @@ def _duration_from_iso(started_at: Optional[str], ended_at: Optional[str]) -> Op
     if not started_at or not ended_at:
         return None
     try:
-        s = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-        e = datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
+        s = datetime.fromisoformat(started_at)
+        e = datetime.fromisoformat(ended_at)
         return (e - s).total_seconds()
     except Exception:
         return None

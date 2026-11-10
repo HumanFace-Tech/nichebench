@@ -1,0 +1,21 @@
+# Sanitized CI fixture for the quiz-v2 data contract.
+#
+# Generated from tests/fixtures/quiz/quiz_v2_fixture.yaml. This is not
+# the private quiz dataset: the text is synthetic and carries no private
+# questions. It exists so the CI data gates have a dataset to run on
+# when the private data submodule is not checked out.
+id: fixture_quiz_011
+dataset_version: quiz-v2
+context: |
+  An article type needs a new text field with a plain text widget. The field
+  must be stored with the node and be editable through the form.
+summary: Adding a field to a content type.
+question: Which approach stores the field on the node?
+choices:
+  - Add a base field of type string with a plain text form widget
+  - Add a field of type entity reference to the article content type
+  - Add a config-only field stored in the site configuration
+  - Add a base field of type list with the allowed values preconfigured
+  - Add a custom field to the user entity instead of the node
+  - Add a paragraph reference field with no target bundle
+correct_choice: E

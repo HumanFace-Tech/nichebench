@@ -460,14 +460,45 @@ def parse_json_safe(text: str) -> Any:
     if len(text) > _MAX_PARSE_INPUT:
         text = text[:_MAX_PARSE_INPUT]
 
-    invalid_json_escape = re.compile(r'\\(?!["\\/bfnrtu])')
+    def repair_invalid_escapes(candidate: str) -> str:
+        """Double backslashes that are not valid JSON string escapes.
+
+        LLMs frequently emit Windows paths or PHP namespaces such as
+        ``\\Drupal\\...`` inside JSON strings. A single backslash followed by
+        ``D`` is not a legal JSON escape, so ``json.loads`` rejects the whole
+        document. Walking the string and only repairing inside string literals
+        preserves valid escapes such as ``\\n`` and ``\\"``.
+        """
+        out: list[str] = []
+        in_string = False
+        index = 0
+        while index < len(candidate):
+            char = candidate[index]
+            if char == '"':
+                in_string = not in_string
+                out.append(char)
+                index += 1
+                continue
+            if in_string and char == "\\":
+                nxt = candidate[index + 1] if index + 1 < len(candidate) else ""
+                if nxt in '"\\/bfnrtu':
+                    out.append(char)
+                    out.append(nxt)
+                    index += 2
+                    continue
+                out.append("\\\\")
+                index += 1
+                continue
+            out.append(char)
+            index += 1
+        return "".join(out)
 
     def loads_lenient(candidate: str) -> Any:
         """Parse JSON, repairing common LLM-produced invalid backslash escapes."""
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
-            return json.loads(invalid_json_escape.sub(r"\\\\", candidate))
+            return json.loads(repair_invalid_escapes(candidate), strict=False)
 
     # Try direct JSON parsing first
     try:
@@ -492,12 +523,12 @@ def parse_json_safe(text: str) -> Any:
     # memory/CPU; previously this accumulated all matches before selecting.
     def extract_first_json_object(text):
         """Return the first valid JSON object found via raw_decode, or None."""
-        decoder = json.JSONDecoder()
+        decoder = json.JSONDecoder(strict=False)
         for index, char in enumerate(text):
             if char != "{":
                 continue
             try:
-                parsed, _ = decoder.raw_decode(invalid_json_escape.sub(r"\\\\", text[index:]))
+                parsed, _ = decoder.raw_decode(repair_invalid_escapes(text[index:]))
             except json.JSONDecodeError:
                 continue
             if isinstance(parsed, dict) and ("criteria" in parsed or "pass" in parsed or "score" in parsed):
@@ -511,12 +542,12 @@ def parse_json_safe(text: str) -> Any:
     # Last resort: scan for any valid JSON object (e.g. a plain object without
     # ``criteria``/``pass``/``score`` keys); return the first one.
     def extract_first_any_object(text):
-        decoder = json.JSONDecoder()
+        decoder = json.JSONDecoder(strict=False)
         for index, char in enumerate(text):
             if char != "{":
                 continue
             try:
-                parsed, _ = decoder.raw_decode(invalid_json_escape.sub(r"\\\\", text[index:]))
+                parsed, _ = decoder.raw_decode(repair_invalid_escapes(text[index:]))
             except json.JSONDecodeError:
                 continue
             if isinstance(parsed, dict):

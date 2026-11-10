@@ -328,13 +328,13 @@ class RuntimeExecutionMixin(CageExecutionMixin):
         return write_cage_git_wrapper(bin_host)
 
     @staticmethod
-    def _derive_cage_npm_provider_key(opencode_provider: str, runtime_config: Dict[str, Any]) -> str:
-        """Derive the provider key for npm-based cage runs (used in opencode.json and --model).
+    def _derive_cage_provider_key(opencode_provider: str, runtime_config: Dict[str, Any]) -> str:
+        """Derive the provider key for remapped cage runs (used in opencode.json and --model).
 
         When ``runtime_opencode_provider_name`` is set, that value is used directly;
         otherwise the original provider name is sanitized to a key-safe string.
         """
-        return runtime_opencode_config.derive_cage_npm_provider_key(opencode_provider, runtime_config)
+        return runtime_opencode_config.derive_cage_provider_key(opencode_provider, runtime_config)
 
     @staticmethod
     def _load_review_nudge() -> str:
@@ -380,7 +380,7 @@ class RuntimeExecutionMixin(CageExecutionMixin):
 
     @staticmethod
     def _read_workspace_system_prompt(workspace_path: Path) -> Optional[str]:
-        """Extract ``mode.build.prompt`` from the workspace ``opencode.json`` (if present)."""
+        """Extract ``agents.build.system`` from the workspace ``opencode.json`` (if present)."""
         return runtime_opencode_config.read_workspace_system_prompt(workspace_path)
 
     @staticmethod

@@ -215,15 +215,13 @@ def build_trajectory_from_sqlite(
                     # Store all parts
                     messages_map[msg_id]["_all_parts"].append(part_json)
 
-                    if part_type in ("thinking", "reasoning"):
-                        # Collect thinking parts
-                        thinking_text = part_json.get("text") or part_json.get("data", "")
-                        if thinking_text:
-                            messages_map[msg_id]["_thinking_parts"].append({"text": thinking_text})
-                    elif part_type == "text":
+                    if part_type in ("thinking", "reasoning") and (
+                        thinking_text := part_json.get("text") or part_json.get("data", "")
+                    ):
+                        messages_map[msg_id]["_thinking_parts"].append({"text": thinking_text})
+                    elif part_type == "text" and not messages_map[msg_id].get("_has_content", False):
                         # Collect text parts for rebuilding if original had no content
-                        if not messages_map[msg_id].get("_has_content", False):
-                            messages_map[msg_id]["_text_parts"].append(part_json.get("text", ""))
+                        messages_map[msg_id]["_text_parts"].append(part_json.get("text", ""))
                 except Exception:
                     pass
 

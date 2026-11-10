@@ -2,7 +2,7 @@
 
 This module provides stateful multi-turn conversation management for iterative
 code generation workflows. It handles the conversation protocol between the
-caller (typically a LangGraph agent) and a remote LLM via LiteLLM.
+caller (the multi-turn ``bug_fixing`` runner) and a remote LLM via LiteLLM.
 
 Ownership Model
 ===============
@@ -13,8 +13,8 @@ handle. The caller is responsible for:
 
 - Creating and configuring the LiteLLM client.
 - Making actual API calls and handling retries/timeouts.
-- Resetting `litellm.api_base` after each agent run (the LangGraph executor resets
-  this automatically; do not break that contract).
+- Leaving the global ``litellm.api_base`` untouched — ``LiteLLMClient`` owns
+  that state and restores it around its own calls; do not set it here.
 - Destroying the manager instance when the conversation is done.
 
 Thread Safety

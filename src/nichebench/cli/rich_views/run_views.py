@@ -18,10 +18,20 @@ def render_run_header(
     judge_model: str,
     profile: str | None,
     *,
+    category: str | None = None,
     runtime_mode: str | None = None,
 ) -> None:
+    """Print the run header.
+
+    Every category — ``quiz`` included — is judged by an LLM, so the
+    configured judge model is always reported; the quiz header additionally
+    says ``llm judge`` to make the scoring method explicit.
+    """
     console.print(f"[cyan]Using MUT:[/cyan] {mut_model}")
-    console.print(f"[cyan]Using Judge:[/cyan] {judge_model}")
+    if category == "quiz":
+        console.print(f"[cyan]Using Judge:[/cyan] {judge_model} (llm judge)")
+    else:
+        console.print(f"[cyan]Using Judge:[/cyan] {judge_model}")
     if profile:
         console.print(f"[cyan]Profile:[/cyan] {profile}")
     if runtime_mode == "host":

@@ -1,0 +1,21 @@
+# Sanitized CI fixture for the quiz-v2 data contract.
+#
+# Generated from tests/fixtures/quiz/quiz_v2_fixture.yaml. This is not
+# the private quiz dataset: the text is synthetic and carries no private
+# questions. It exists so the CI data gates have a dataset to run on
+# when the private data submodule is not checked out.
+id: fixture_quiz_003
+dataset_version: quiz-v2
+context: |
+  You have changed a view configuration on a staging site and want to move
+  the change to production without hand-editing exported YAML.
+summary: Moving configuration changes between environments.
+question: What is the standard way to move a configuration change?
+choices:
+  - Export the changed configuration on staging and import it on production
+  - Copy the exported YAML into the site's config directory by hand
+  - Toggle the module on and off again on production
+  - Run the update hooks on production so they recreate the configuration
+  - Delete the configuration from production and let the module rebuild it
+  - Edit the configuration in the database with a direct SQL query
+correct_choice: C

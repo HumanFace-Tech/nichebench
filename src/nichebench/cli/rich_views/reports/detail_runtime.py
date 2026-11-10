@@ -59,6 +59,7 @@ def _render_runtime_details_table(console: Console, header_text: str, rows: Sequ
 
     provenance_rows = []
     failed_checks_by_test: dict = {}
+    zero_check_tests: list = []
 
     for test_id, test_rows in id_groups.items():
         # Use the last trial's row for metadata (checks, provenance)
@@ -136,6 +137,8 @@ def _render_runtime_details_table(console: Console, header_text: str, rows: Sequ
         # Build checks summary: passed/total
         passed_checks = sum(1 for c in checks if c.get("passed"))
         total_checks = len(checks)
+        if total_checks == 0:
+            zero_check_tests.append(test_id)
         checks_text = f"{passed_checks}/{total_checks}"
 
         # Collect failed check names for separate panel
@@ -206,6 +209,20 @@ def _render_runtime_details_table(console: Console, header_text: str, rows: Sequ
             Panel(
                 ftable,
                 style="red",
+                padding=(1, 0, 0, 0),
+                expand=False,
+                width=80,
+            )
+        )
+    elif zero_check_tests:
+        # Runtime failed before deterministic checks ran; do not claim success.
+        console.print(
+            Panel(
+                "[yellow]No deterministic checks ran (runtime failed before checks): "
+                + ", ".join(str(t) for t in zero_check_tests)
+                + "[/yellow]",
+                title="[bold yellow]Failed Checks[/bold yellow]",
+                style="yellow",
                 padding=(1, 0, 0, 0),
                 expand=False,
                 width=80,

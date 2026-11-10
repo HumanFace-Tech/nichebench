@@ -50,6 +50,8 @@ mut:
     # reasoning_format: "hidden"  # "hidden" or "visible" - hidden is ideal for MUT
 
 # Judge model configuration
+# Quiz scoring uses the configured judge model to select an answer letter.
+# `nichebench run ... quiz --judge ...` overrides this setting for that run.
 judge:
   provider: "openai"
   model: "gpt-5"
@@ -63,6 +65,14 @@ judge:
 
 # Global evaluation settings
 evaluation:
+  judge_threshold: 0.7          # Pass threshold for direct code/bug judge scores
+
+  # Structural sanity checks for code generation (structural only — no
+  # class-name/architecture grading): hard-fail only when the response has
+  # no code at all or is obviously truncated; everything else is advisory.
+  code_sanity_checks: true
+  # Future switch for blending a sanity component into the score — not implemented yet.
+  code_sanity_blend: false
   save_full_prompts: true       # Include full input prompts in results
   save_raw_outputs: true        # Include raw model outputs
   parallelism: 1                # Number of parallel test executions (1 = sequential)
@@ -85,6 +95,18 @@ evaluation:
   # See docs/runtime/runtime-tracing.md.
   runtime_capture_enable: false
   runtime_capture_disk_quota_bytes: 4294967296   # 4 GiB per runtime task
+
+  # ------------------------------------------------------------------
+  # Cage runtime (OpenCode V2)
+  # ------------------------------------------------------------------
+  # The cage container image is pinned to the OpenCode V2 line. Rebuild the
+  # derived DDEV image from this base image to add the ddev/docker/git binaries.
+  runtime_container_image: ghcr.io/anomalyco/opencode:2.2.5
+  runtime_container_ddev_image: nichebench/opencode-ddev:2.2.5
+  # V2 provider package used for OpenAI-compatible endpoints (V2 `package`).
+  runtime_opencode_provider_package: "aisdk:@ai-sdk/openai-compatible"
+  # V2 provider compatibility flag (V1 `options.setCacheKey`).
+  runtime_opencode_supports_prompt_cache_key: true
 
 # Network and reliability settings
 network:
@@ -182,7 +204,7 @@ profiles:
 #     mut: {provider: "together", model: "meta-llama/Llama-3-8b-chat-hf", temp: 0.0}
 #     judge: {provider: "groq", model: "llama3-70b-8192", temp: 0.5}
 
-  # MiniMax Token Plan — M2.7 (SOTA coding/agent model)
+  # MiniMax Token Plan — M2.7 (use as MUT or judge when available; rate-limited in smoke)
   #   Context: 204,800 tokens  |  Max output: 32,768 tokens
   # Requires:
   #   export MINIMAX_API_KEY="<subscription-key-from-platform.minimax.io>"

@@ -34,6 +34,7 @@ from nichebench.core.datamodel import TestCaseSpec
 from nichebench.execution.diagnostics.trace import (
     RuntimeTrace,
     classify_runtime_failure,
+    is_infrastructure_failure,
 )
 from nichebench.execution.result import TestResult
 from nichebench.execution.runtime.scoring import CheckResult
@@ -403,6 +404,10 @@ def handle_exception(
         failed_critical_check=False,
         failed_stage=failed_stage,
     )
+    if is_infrastructure_failure(failure_info.failure_class, str(exc)):
+        # Broken image/CLI/environment: exclude from model-quality averages.
+        result.error_kind = "config_error"
+        result.judge_output["error_kind"] = "config_error"
     if not result.runtime_artifacts:
         result.runtime_artifacts = {}
 

@@ -4,7 +4,7 @@ Why a proxy
 -----------
 To answer "what did we actually send and receive" the harness must see the
 bytes. The cage reaches the provider through this process instead of dialing
-the provider directly, so the same provider key, npm provider package, model
+the provider directly, so the same provider key, provider package, model
 id, prompt, tools, permissions, and sampling parameters are preserved — only
 the transport base URL changes. No SDK switch, no provider remapping.
 

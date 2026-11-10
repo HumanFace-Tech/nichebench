@@ -1,41 +1,37 @@
 [tool.poetry]
 name = "nichebench"
-version = "0.2.1"
+version = "0.3.0"
 description = "Benchmarking harness for evaluating LLM agents on structured tasks across CMS and code generation domains."
 authors = ["Sergiu Nagailic (Nikro) <nikro.md@gmail.com>"]
 readme = "README.md"
-packages = [{include = "nichebench", from = "src"}]
-exclude = ["src/nichebench/frameworks/*/data/**"]
+# `nichebench/*` (glob) keeps poetry-core from recursively expanding the whole
+# package tree during discovery; the 438 MB frameworks/*/data submodules would
+# otherwise be re-walked once per directory and stall `poetry build`.
+packages = [{include = "nichebench/*", from = "src"}]
+# Directory form (no `/**`) so the exclude walk enumerates each data tree once.
+exclude = ["src/nichebench/frameworks/*/data"]
 
 [tool.poetry.scripts]
 nichebench = "nichebench.cli.app:main"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.14"
-typer = "^0.16.0"
-rich = "^14.1.0"
-pyyaml = "^6.0.2"
-python-dotenv = "^1.1.1"
-deepeval = "^3.3.9"
-litellm = ">=1.89.1,<1.90"
-pandas = "^2.3.1"
-pyarrow = "^21.0.0"
-langchain = "^0.3.27"
-langchain-community = "^0.3.29"
-langchain-litellm = "^0.2.2"
-langgraph = "^0.6.7"
-langchain-groq = "^0.3.8"
-aiohttp = ">=3.12,<4"
+python = ">=3.13,<3.15"
+typer = "^0.27.3"
+rich = "^15.0.0"
+pyyaml = "^6.0.3"
+python-dotenv = "^1.2.4"
+litellm = "==1.106.7"
+aiohttp = "^3.14.5"
 
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.4.1"
+pytest = "^9.2.0"
 pytest-xdist = "^3.8.0"
-black = "^25.1.0"
-ruff = "^0.12.9"
-pre-commit = "^4.3.0"
-types-pyyaml = "^6.0.12.20250915"
-mypy = "~1.18.2"
+black = "^26.10.1"
+ruff = "^0.17.3"
+pre-commit = "^4.7.0"
+types-pyyaml = "^6.0.12.20261103"
+mypy = "^2.4.1"
 
 [build-system]
 requires = ["poetry-core"]
@@ -45,7 +41,7 @@ line-length = 120
 extend-exclude = ["src/nichebench/frameworks/*/data"]
 
 [tool.ruff.lint]
-extend-select = ["E", "F", "W", "I", "PIE", "FURB", "RET", "SIM", "ERA"]
+select = ["E", "F", "W", "I", "PIE", "FURB", "RET", "SIM", "ERA"]
 
 [tool.ruff.lint.per-file-ignores]
 # Allow long literal prompt strings in framework prompt modules
@@ -53,7 +49,7 @@ extend-select = ["E", "F", "W", "I", "PIE", "FURB", "RET", "SIM", "ERA"]
 "src/nichebench/frameworks/*/prompts/judges/*.py" = ["E501"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.13"
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
 exclude = ["src/nichebench/frameworks/.*/data/"]

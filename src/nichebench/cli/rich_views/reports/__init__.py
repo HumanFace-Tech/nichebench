@@ -44,10 +44,12 @@ Rendering boundaries
 * Category-specific detail tables (``_render_runtime_details_table`` etc.)
   are internal helpers — the public entry point makes the routing decision
   and delegates.
-* Numeric thresholds used for pass/fail colour coding (e.g. 0.66 for
-  code-generation scores) are embedded in the rendering logic here;
-  changing them requires updating the corresponding scoring thresholds in
-  ``execution/summary.py`` for consistency.
+* Numeric bands used for pass/fail colour coding live in the renderers, but
+  they are not free-standing: the partial floor is
+  ``execution.summary.PARTIAL_SCORE_FLOOR`` (imported by the code detail
+  table) and the pass threshold comes from the run's recorded
+  ``evaluation.judge_threshold`` (see ``config.settings.resolve_judge_threshold``),
+  so display and scoring cannot drift apart.
 * Safe score coercion is owned by ``nichebench.execution.summary.normalize_score``;
   report views import it directly so display and summary aggregation agree on
   what counts as a valid score (finite numeric strings, ``bool`` rejected,

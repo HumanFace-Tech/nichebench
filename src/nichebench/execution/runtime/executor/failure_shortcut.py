@@ -27,6 +27,7 @@ from typing import Any, Dict, Optional
 from nichebench.execution.diagnostics.trace import (
     RuntimeTrace,
     classify_runtime_failure,
+    is_infrastructure_failure,
 )
 from nichebench.execution.result import TestResult
 
@@ -84,6 +85,10 @@ def apply_failure_shortcut(
     }
     if diagnostics_enabled:
         result.judge_output.update(failure_info.to_dict())
+    if is_infrastructure_failure(failure_info.failure_class, catastrophic_reason):
+        # Broken image/CLI/environment: exclude from model-quality averages.
+        result.error_kind = "config_error"
+        result.judge_output["error_kind"] = "config_error"
 
     metadata = runtime_artifacts.get("metadata.json") or {}
     metadata = dict(metadata)

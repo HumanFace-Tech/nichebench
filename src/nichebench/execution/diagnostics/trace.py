@@ -208,3 +208,28 @@ def first_failed_stage(trace: Dict[str, Any]) -> Optional[str]:
         if stage.get("status") == "failed":
             return str(stage.get("stage"))
     return None
+
+
+# Runtime failures caused by the harness/environment rather than by the model
+# under test.  These must not be scored as model failures.
+_INFRASTRUCTURE_FAILURE_CLASSES = frozenset({"drupal_environment", "network_connectivity"})
+_INFRASTRUCTURE_ERROR_MARKERS = (
+    "unrecognized flag",
+    "unknown flag",
+    "failed to build",
+    "error getting credentials",
+    "no such image",
+    "permission denied",
+)
+
+
+def is_infrastructure_failure(failure_class: str, error: Optional[str]) -> bool:
+    """Return True when a runtime failure is harness/environment infrastructure.
+
+    A model-quality score must not be dragged down by a broken cage image, a
+    missing Docker credential, or an unsupported CLI flag.
+    """
+    if failure_class in _INFRASTRUCTURE_FAILURE_CLASSES:
+        return True
+    text = (error or "").lower()
+    return any(marker in text for marker in _INFRASTRUCTURE_ERROR_MARKERS)

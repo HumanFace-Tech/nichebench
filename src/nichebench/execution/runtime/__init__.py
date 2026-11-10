@@ -91,7 +91,7 @@ What this package does NOT own
 -----------------------------
 - Task discovery, loading, or manifest parsing — see ``nichebench.core``.
 - CLI, config loading, or profile resolution — see ``nichebench.config``.
-- The LangGraph code agent or conversation manager — see ``nichebench.providers``.
+- The conversation manager — see ``nichebench.providers``.
 - General scoring (quiz, code_gen, bug_fixing) — see ``nichebench.core.scoring``.
 - Static Drupal tasks (quiz, code_gen, bug_fixing) — see
   ``nichebench.frameworks.drupal``.

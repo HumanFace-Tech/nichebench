@@ -210,7 +210,7 @@ def decode_column(encoded: Any) -> Any:
         return bytes(raw)
     if kind == "null":
         return None
-    if kind in ("int",):
+    if kind == "int":
         return int(raw) if raw is not None else None
     if kind == "float":
         return float(raw) if raw is not None else None

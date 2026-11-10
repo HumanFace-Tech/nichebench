@@ -25,6 +25,22 @@ def test_parse_json_safe_embedded_json():
     assert isinstance(out, dict) and out["status"] == "success" and out["value"] == 42
 
 
+def test_parse_json_safe_repairs_invalid_escapes_in_outer_object():
+    """A fenced rubric with PHP namespaces must parse as the outer object.
+
+    The invalid ``\\D`` / ``\\s`` escapes make ``json.loads`` reject the whole
+    document. The fallback must repair them instead of returning the first
+    nested criterion object (which has ``pass`` but no ``criteria``).
+    """
+    s = r'''```json
+{"criteria":[{"criterion":"uses \Drupal\service()","pass":true,"explanation":"ok"}],"overall_score":0.5,"summary":"ok"}
+```'''
+    out = parse_json_safe(s)
+    assert isinstance(out, dict)
+    assert isinstance(out.get("criteria"), list)
+    assert out["overall_score"] == 0.5
+
+
 def test_parse_json_safe_malformed():
     """Test handling of malformed JSON."""
     s = "This is not JSON at all"

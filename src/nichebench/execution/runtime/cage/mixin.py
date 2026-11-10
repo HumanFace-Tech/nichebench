@@ -224,7 +224,7 @@ class CageExecutionMixin:
     def _compute_opencode_model_binding(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
-    def _derive_cage_npm_provider_key(self, *args: Any, **kwargs: Any) -> Any:
+    def _derive_cage_provider_key(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
     def _get_provider_api_keys(self, *args: Any, **kwargs: Any) -> Any:
@@ -488,12 +488,12 @@ class CageExecutionMixin:
             if not cage_api_base.endswith("/v1"):
                 cage_api_base += "/v1"
 
-        # When api_base is configured, use an npm-based @ai-sdk/openai-compatible
-        # provider with a derived key instead of remapping to the built-in "openai".
+        # When api_base is configured, use an OpenAI-compatible provider package
+        # with a derived key instead of remapping to the built-in "openai".
         # Without api_base, non-native providers still fall back to "openai".
         if cage_api_base:
-            npm_key = self._derive_cage_npm_provider_key(opencode_provider, runtime_config)
-            opencode_model_binding = f"{npm_key}/{opencode_model_id}"
+            provider_key = self._derive_cage_provider_key(opencode_provider, runtime_config)
+            opencode_model_binding = f"{provider_key}/{opencode_model_id}"
         else:
             if opencode_provider not in _executor_globals()._OPENCODE_NATIVE_PROVIDERS:
                 opencode_provider = "openai"
@@ -722,7 +722,7 @@ class CageExecutionMixin:
         # Add provider API keys from host environment
         for key, value in api_keys.items():
             command.extend(["-e", f"{key}={value}"])
-        command.extend(["--entrypoint", "opencode", image, "run", "--pure"])
+        command.extend(["--entrypoint", "opencode", image, "run"])
         if capture is not None:
             # Structured JSON event stream plus reasoning parts. The flags are
             # appended only when capture is enabled so the non-capture command

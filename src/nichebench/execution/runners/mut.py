@@ -6,8 +6,7 @@ against the model configured as the *model under test* (MUT).
 Responsibilities
 ===============
 * Route each test case to the appropriate execution strategy:
-  single-turn (quiz, code generation), multi-turn (bug fixing), or
-  plan-based agentic (code agent / runtime).
+  single-turn (quiz, code generation) or multi-turn (bug fixing).
 * Compose the user prompt from :class:`TestCaseSpec` using
   :class:`MUTPromptComposer` — task-specific prompting logic lives there,
   **not here**.
@@ -20,11 +19,8 @@ Key boundaries
   :class:`JudgeRunner`'s responsibility.
 * Task-specific prompt construction is delegated to ``MUTPromptComposer``;
   adding a new task type usually means updating that class, not this one.
-* The ``code_agent`` and ``runtime`` categories use
-  :class:`LangGraphCodeAgent`, which manages its own state machine and
-  **must** have ``litellm.api_base`` reset after each invocation
-  (global state set by the LangGraph ``ChatLiteLLM`` wrapper would otherwise
-  cause 404 errors on subsequent judge calls).
+* The removed ``code_agent`` category is rejected explicitly — it must
+  never fall through to another execution path.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -43,12 +39,10 @@ class MUTRunner:
     * :meth:`_run_single_turn` — one prompt, one response (quiz, code gen,
       fallback for unknown categories).
     * :meth:`_run_multi_turn` — iterative conversation with the model,
-      used for ``bug_fixing`` and ``code_agent``/``runtime`` categories.
+      used for the ``bug_fixing`` category.
 
-    Lifecycle note: after a ``code_agent``/``runtime`` run the global
-    ``litellm.api_base`` is reset because ``ChatLiteLLM`` sets it during
-    LangGraph execution.  Failing to reset causes subsequent judge calls
-    to route to the wrong endpoint.
+    The removed ``code_agent`` category raises :class:`ValueError` instead
+    of routing anywhere, so a legacy task can never execute as another type.
     """
 
     def __init__(
@@ -67,17 +61,26 @@ class MUTRunner:
             test_case: the task specification loaded from the framework YAML.
             system_prompt: optional system-level instruction overlay.
             category: one of ``quiz``, ``code_generation``, ``bug_fixing``,
-                ``code_agent``, ``runtime``.
+                ``runtime``.  The removed ``code_agent`` category is
+                rejected explicitly.
             runner: optional progress-reporting callback (used by the
-                LangGraph agent to surface step updates in the CLI).
+                conversation loop to surface turn updates in the CLI).
 
         Returns:
             Tuple of ``(mut_output, user_input)`` where ``user_input`` is
             the composed prompt sent to the model (for logging / traceability).
+
+        Raises:
+            ValueError: if ``category`` is the removed ``code_agent``
+                category — legacy tasks must never run as another type.
         """
+        if category == "code_agent":
+            raise ValueError(
+                "Category 'code_agent' has been removed; use the 'runtime' (drupal_runtime) category instead."
+            )
         if category == "quiz" or category == "code_generation":
             return self._run_single_turn(test_case, system_prompt, category)
-        if category in ("code_agent", "bug_fixing"):
+        if category == "bug_fixing":
             return self._run_multi_turn(test_case, system_prompt, category, runner)
         return self._run_single_turn(test_case, system_prompt, category)
 
@@ -101,84 +104,15 @@ class MUTRunner:
     def _run_multi_turn(
         self, test_case: TestCaseSpec, system_prompt: Optional[str], category: str, runner=None
     ) -> Tuple[str, str]:
-        """Run an iterative conversation or plan-based agent.
+        """Run an iterative conversation with the model.
 
-        Two sub-paths:
-
-        * ``bug_fixing`` — uses :class:`MUTPromptComposer`'s conversation
-          manager to exchange multiple turns with the model.
-        * ``code_agent`` / ``runtime`` — uses :class:`LangGraphCodeAgent`
-          which runs a Planner/Solver state machine and returns the final
-          result string.
-
-        After the LangGraph path the global ``litellm.api_base`` is reset
-        to prevent cross-contamination of judge calls.
+        Used for ``bug_fixing``: :class:`MUTPromptComposer`'s conversation
+        manager exchanges multiple turns with the model.
         """
-        # Start conversation
-        if category == "code_agent":
-            # Use LangGraph agent for proper plan-based execution
-            from nichebench.frameworks.drupal.prompts.CODE_AGENT import (
-                CODE_AGENT_BASE_PROMPT,
-            )
-            from nichebench.providers.langgraph_code_agent import LangGraphCodeAgent
-
-            # Create the LangGraph agent with correct parameters
-            agent = LangGraphCodeAgent(
-                model=self.model_str,
-                custom_llm_params=self.model_config.get("parameters", {}),
-            )
-
-            # Prepare context for the agent
-            context = getattr(test_case, "context", None) or test_case.raw.get("context", "")
-            task_description = getattr(test_case, "prompt", "") or test_case.raw.get("prompt", "")
-
-            # Create progress callback from runner
-            progress_callback = None
-            if runner:
-
-                def update_progress(message: str, step: int):
-                    runner.update_test_status(f"[yellow]🧪 {test_case.id}[/yellow] - {message}", step)
-
-                progress_callback = update_progress
-
-            # Execute the task - returns string result
-            final_output = agent.execute_task(
-                task_description=task_description, context=context, progress_callback=progress_callback
-            )
-
-            # CRITICAL: Reset global litellm.api_base after LangGraph agent finishes
-            # The LangGraph agent uses ChatLiteLLM which sets global state that affects
-            # subsequent judge calls. We need to clear this to prevent 404 errors.
-            try:
-                import litellm
-
-                if hasattr(litellm, "api_base"):
-                    setattr(litellm, "api_base", None)
-            except ImportError:
-                pass  # litellm not available, ignore
-
-            # Build comprehensive input message showing the full prompt chain
-            input_parts = [
-                f"TASK: {task_description}",
-            ]
-            if context:
-                input_parts.append(f"CONTEXT: {context}")
-
-            input_parts.extend(
-                [
-                    f"\nSYSTEM PROMPT: {(system_prompt or CODE_AGENT_BASE_PROMPT or '')[:200]}...",
-                    "\nEXECUTION: LangGraph plan-based code generation",
-                ]
-            )
-
-            initial_user_message = "\n".join(input_parts)
-
-            return final_output, initial_user_message
-
-        if category == "bug_fixing":
-            conversation = MUTPromptComposer.start_bug_conversation(test_case, system_prompt)
-        else:
+        if category != "bug_fixing":
             raise ValueError(f"Multi-turn not supported for category: {category}")
+
+        conversation = MUTPromptComposer.start_bug_conversation(test_case, system_prompt)
 
         # Execute conversation turns
         messages: Optional[List[Dict[str, str]]] = conversation._format_for_llm()

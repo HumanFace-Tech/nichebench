@@ -9,8 +9,11 @@ own modules and are imported here for the routing decision inside
 ``render_run_completion_report``.
 
 This module only *renders* data that has already been produced by the
-executor and written to disk as JSON lines (NDJSON).  It has **no**
-knowledge of config loading, task discovery, or execution scheduling.
+executor and written to disk as JSON lines (NDJSON) or as ``summary.json``.
+It has **no** knowledge of config loading, task discovery, or execution
+scheduling: the pass threshold it reports with is the ``judge_threshold``
+the run recorded inside ``summary.json`` (falling back to the environment
+default when the run predates the key).
 """
 
 import json
@@ -22,12 +25,25 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from nichebench.cli.rich_views.reports.detail_code import _render_code_details_table
+from nichebench.cli.rich_views.reports.detail_code import (
+    _render_code_details_table,
+    is_failed_code_row,
+)
 from nichebench.cli.rich_views.reports.detail_quiz import _render_quiz_details_table
 from nichebench.cli.rich_views.reports.detail_runtime import (
     _render_runtime_details_table,
 )
+from nichebench.config.settings import resolve_judge_threshold
 from nichebench.execution.summary import normalize_score
+
+
+def _summary_evaluation_config(summary: Mapping) -> Optional[Mapping]:
+    """Return the effective evaluation block a run recorded in ``summary.json``."""
+    config = summary.get("config")
+    if not isinstance(config, Mapping):
+        return None
+    evaluation = config.get("evaluation")
+    return evaluation if isinstance(evaluation, Mapping) else None
 
 
 def render_run_completion_report(summary_path: Path, details_path: Optional[Path] = None):
@@ -39,7 +55,15 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
     with open(summary_path) as f:
         summary = json.load(f)
 
+    # Pass threshold of the run being reported (``evaluation.judge_threshold``
+    # when the run recorded one, otherwise the environment default).  Used to
+    # count and render failures for the LLM-judged categories.
+    evaluation_config = _summary_evaluation_config(summary)
+    judge_threshold = resolve_judge_threshold(evaluation_config)
+
     # Clean summary table - exclude config and other verbose data
+    is_quiz = summary.get("category") == "quiz"
+    is_code = summary.get("category") in ("code_generation", "bug_fixing", "code_agent")
     display_keys = ["framework", "category", "model", "judge", "total", "results", "avg_score"]
     emoji_map = {
         "results": "📊",
@@ -51,6 +75,71 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
         "judge": "⚖️",
     }
 
+    col_titles: dict = {}
+    if is_quiz:
+        # Quiz is judged by an LLM like every other category: the summary
+        # reports the scoring method, and the average score is the pass rate
+        # over the scored rows.  The judge *model* travels in ``summary.json``
+        # (``judge``) and in the run header / detail panel.
+        display_keys = [
+            "framework",
+            "category",
+            "model",
+            "judge_method",
+            "total",
+            "results",
+            "avg_score",
+        ]
+        col_titles["judge_method"] = "🎯 Scoring"
+        col_titles["avg_score"] = "🎯 Pass Rate"
+        # Judge-error and config-error rows are excluded from the pass rate,
+        # so a quiz run that carries any has to say why its total is below
+        # the rows it ran.
+        quiz_extras = [key for key in ("attempted_total", "judge_errors") if key in summary]
+        insert_at = display_keys.index("results")
+        display_keys[insert_at:insert_at] = quiz_extras
+        if "attempted_total" in quiz_extras:
+            col_titles["attempted_total"] = "🔢 Attempted Total"
+        if "judge_errors" in quiz_extras:
+            col_titles["judge_errors"] = "⚠️ Judge Errors"
+        dataset_version = summary.get("dataset_version")
+        if dataset_version:
+            display_keys.append("dataset_version")
+            col_titles["dataset_version"] = "📦 Dataset"
+        parse_failures = summary.get("parse_failures") or 0
+        try:
+            parse_failures = int(parse_failures)
+        except (TypeError, ValueError):
+            parse_failures = 0
+        if parse_failures > 0:
+            display_keys.append("parse_failures")
+            col_titles["parse_failures"] = "⚠️ Parse Failures"
+        # Config failures are excluded from the pass rate, so a quiz run that
+        # carries any has to say why its total is below the rows it ran.
+        config_errors = summary.get("config_errors") or 0
+        try:
+            config_errors = int(config_errors)
+        except (TypeError, ValueError):
+            config_errors = 0
+        if config_errors > 0:
+            display_keys.append("config_errors")
+            col_titles["config_errors"] = "⚠️ Config Errors"
+
+    if is_code:
+        # Judge-error and config-error rows are excluded from ``total`` and
+        # ``avg_score`` by the aggregator, so the summary reports the raw
+        # attempted count and each infrastructure-failure count — labelled
+        # separately — alongside the scored total.
+        extras = [key for key in ("attempted_total", "judge_errors", "config_errors") if key in summary]
+        insert_at = display_keys.index("results")
+        display_keys[insert_at:insert_at] = extras
+        if "attempted_total" in extras:
+            col_titles["attempted_total"] = "🔢 Attempted Total"
+        if "judge_errors" in extras:
+            col_titles["judge_errors"] = "⚠️ Judge Errors"
+        if "config_errors" in extras:
+            col_titles["config_errors"] = "⚠️ Config Errors"
+
     # Add vertical space before summary
     console.print("\n")
     table = Table(
@@ -61,14 +150,15 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
     )
 
     for key in display_keys:
-        col_title = (
-            f"{emoji_map.get(key, '')} {key.replace('_', ' ').title()}"
-            if key in emoji_map
-            else key.replace("_", " ").title()
-        )
+        if key in col_titles:
+            col_title = col_titles[key]
+        elif key in emoji_map:
+            col_title = f"{emoji_map.get(key, '')} {key.replace('_', ' ').title()}"
+        else:
+            col_title = key.replace("_", " ").title()
         table.add_column(
             col_title,
-            style="cyan" if key in ("framework", "category", "model", "judge") else "white",
+            style="cyan" if key in ("framework", "category", "model", "judge", "judge_method") else "white",
         )
 
     table_row = []
@@ -88,6 +178,10 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
                 results_parts.append(f"[bold red]❌ {failed}[/bold red]")
 
             table_row.append("\n".join(results_parts) if results_parts else "0")
+        elif key == "avg_score" and "avg_score" in summary and summary["avg_score"] is None:
+            # Nothing could be scored (every row was a judge or config error)
+            # — show an honest "n/a" instead of a fabricated 0%.
+            table_row.append("n/a")
         elif key == "avg_score":
             # Normalize before arithmetic, formatting, comparisons, and conversion.
             # Tolerates numeric strings, invalid values, non-finite values, and
@@ -110,6 +204,12 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
                 table_row.append(f"[bold yellow]{score_str}[/bold yellow]")
             else:
                 table_row.append(f"[bold red]{score_str}[/bold red]")
+        elif key == "judge_method" and is_quiz:
+            # Quiz is judged by an LLM; older summaries without the key fall
+            # back to the only method a quiz run can have.
+            table_row.append(str(summary.get("judge_method") or "llm"))
+        elif key == "parse_failures":
+            table_row.append(str(summary.get("parse_failures", 0)))
         elif key in summary:
             val = summary[key]
             table_row.append(str(val))
@@ -117,6 +217,10 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
             table_row.append("N/A")
     table.add_row(*table_row)
     console.print(table)
+
+    # Quiz runs additionally report the parse-failure taxonomy.
+    if is_quiz:
+        _render_parse_failure_reasons(console, summary)
 
     # Optionally show per-test breakdown if details_path is given
     if details_path and details_path.exists():
@@ -157,14 +261,11 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
             failed_count = 0
             for row in rows:
                 if cat in ("code_generation", "bug_fixing", "code_agent"):
-                    judge_output = row.get("judge_output", {})
-                    if isinstance(judge_output, dict):
-                        score = normalize_score(judge_output.get("overall_score"), 0.0)
-                        if score <= 0.66:
-                            failed_count += 1
-                    else:
-                        if not row.get("pass", False):
-                            failed_count += 1
+                    # Same predicate as the detail table: the run's verdict
+                    # decides, so a failure never falls outside the count just
+                    # because its score cleared the old 0.66 display band.
+                    if is_failed_code_row(row, judge_threshold):
+                        failed_count += 1
                 else:
                     if not row.get("pass", False):
                         failed_count += 1
@@ -187,6 +288,16 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
                     f"[bold]Total:[/bold] {total_count}  |  "
                     f"[bold red]❌ Failed: {failed_count}[/bold red]"
                 )
+            elif cat == "quiz":
+                # Quiz is judged by an LLM — the judge model travels with the
+                # run; the scoring method is appended by the quiz renderer.
+                header_text = (
+                    f"[bold]Model:[/bold] [magenta]{mut}[/magenta]  |  "
+                    f"[bold]Judged by:[/bold] [cyan]{judge}[/cyan]  |  "
+                    f"[bold]Framework:[/bold] [green]{fw}[/green]  |  "
+                    f"[bold]Category:[/bold] [yellow]{cat}[/yellow]  |  "
+                    f"[bold red]❌ Failed Tests: {failed_count}[/bold red]"
+                )
             else:
                 header_text = (
                     f"[bold]Model:[/bold] [magenta]{mut}[/magenta]  |  "
@@ -202,10 +313,47 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
             elif cat == "runtime":
                 _render_runtime_details_table(console, header_text, rows)
             elif cat in ("code_generation", "bug_fixing", "code_agent"):
-                _render_code_details_table(console, header_text, rows, cat)
+                _render_code_details_table(console, header_text, rows, cat, evaluation_config)
             else:
                 # Fallback for unknown categories
                 _render_generic_details_table(console, header_text, rows)
+
+
+def _render_parse_failure_reasons(console: Console, summary: Mapping) -> None:
+    """Show the parse-failure taxonomy of a quiz run.
+
+    Only rendered when the summary reports at least one parse failure and
+    carries a reason breakdown.  The reasons are ordered by frequency so
+    the most common failure mode is visible first.
+    """
+    reasons = summary.get("parse_failure_reasons")
+    if not isinstance(reasons, Mapping) or not reasons:
+        return
+
+    try:
+        total = int(summary.get("parse_failures") or 0)
+    except (TypeError, ValueError):
+        total = 0
+    if total <= 0:
+        return
+
+    def _count(value) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    table = Table(
+        title="[bold yellow]Parse Failure Reasons[/bold yellow]",
+        header_style="bold magenta",
+        padding=(0, 1),
+        min_width=40,
+    )
+    table.add_column("Reason", style="white")
+    table.add_column("Count", style="bold yellow", justify="right")
+    for reason, count in sorted(reasons.items(), key=lambda item: (-_count(item[1]), str(item[0]))):
+        table.add_row(str(reason), str(count))
+    console.print(table)
 
 
 def _render_generic_details_table(console: Console, header_text: str, rows: List[Mapping]):

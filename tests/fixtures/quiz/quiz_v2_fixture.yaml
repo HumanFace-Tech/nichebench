@@ -1,0 +1,176 @@
+# Synthetic quiz-v2 fixture.
+#
+# 12 items, 6 plain-text choices each, no leading letter prefixes.
+# Gold letters cycle A-F twice so the fixture is easy to reason about and the
+# gold distribution is uniform (2 per letter).
+#
+# This file is for unit tests only. It is NOT part of the real quiz dataset.
+- id: fixture_quiz_001
+  context: |
+    You are building a Drupal module and need to read the current route path
+    from a service. You want a testable solution that does not hardcode paths.
+  summary: Reading the current route from an injected service.
+  question: Which approach reads the current route path in a service?
+  choices:
+    - Inject the routing service and ask it for the current route match
+    - Read $_SERVER['REQUEST_URI'] and trim the base path by hand
+    - Store the path in a global variable during a route subscriber
+    - Call the path alias manager with a hardcoded alias for each page
+    - Use the site settings service to look up the path pattern
+    - Parse the request URI out of the kernel request object as a plain string
+  correct_choice: A
+- id: fixture_quiz_002
+  context: |
+    A module ships a service whose constructor needs a configuration value and
+    a logger. You want the container to build it for you.
+  summary: Defining a service with constructor arguments.
+  question: How should the service arguments be supplied?
+  choices:
+    - Declare them in the services.yml file so the container injects them
+    - Build the object manually inside every form class that needs it
+    - Read them from a static helper that the class calls in the constructor
+    - Pass them through a global service locator set up in the module file
+    - Ask the config factory for the values on every property access
+    - Create the object in a hook_boot and store it in a static property
+  correct_choice: B
+- id: fixture_quiz_003
+  context: |
+    You have changed a view configuration on a staging site and want to move
+    the change to production without hand-editing exported YAML.
+  summary: Moving configuration changes between environments.
+  question: What is the standard way to move a configuration change?
+  choices:
+    - Export the changed configuration on staging and import it on production
+    - Copy the exported YAML into the site's config directory by hand
+    - Toggle the module on and off again on production
+    - Run the update hooks on production so they recreate the configuration
+    - Delete the configuration from production and let the module rebuild it
+    - Edit the configuration in the database with a direct SQL query
+  correct_choice: C
+- id: fixture_quiz_004
+  context: |
+    A contact form should show a message when the submitted email address is
+    not valid. The check must run before the form is submitted to the backend.
+  summary: Validating a form field.
+  question: Where should the validation logic live?
+  choices:
+    - In the form's validate method, so it runs before submission
+    - In the form's submit method, so it runs after submission
+    - In a theme function that inspects the submitted values
+    - In a service that is called from a kernel event subscriber
+    - In a JavaScript file that blocks the submit button
+    - In a constraint on the entity, applied after the form is submitted
+  correct_choice: D
+- id: fixture_quiz_005
+  context: |
+    You need every published article, newest first, and you want the query to
+    use the index on the publishing date.
+  summary: Loading nodes with an entity query.
+  question: Which query gives the right result and stays indexable?
+  choices:
+    - Use an entity query with a published condition and a date sort
+    - Load all nodes with no conditions and sort them in PHP
+    - Query the database table directly with a raw SQL statement
+    - Use a view with a relationship and no filters
+    - Load nodes through the node list builder with no pager
+    - Use a config export that stores the node list
+  correct_choice: E
+- id: fixture_quiz_006
+  context: |
+    A theme needs a different wrapper element for the teaser view of a node.
+    The change should not affect other themes.
+  summary: Altering the markup of a template in one theme.
+  question: What is the cleanest way to do this?
+  choices:
+    - Add a preprocess function in the theme and override the template
+    - Edit the core template file in the profiles directory
+    - Add CSS that hides the original wrapper element
+    - Replace the core node template with a copy in the site theme
+    - Override the node view builder class in the site module
+    - Add a hook_entity_view_alter in the site module
+  correct_choice: F
+- id: fixture_quiz_007
+  context: |
+    A block renders a list of recent posts. The list changes only when new
+    content is published, so you want the cached page to be dropped at that
+    moment and not on every request.
+  summary: Invalidating a cached block when content changes.
+  question: Which mechanism invalidates the cache at the right time?
+  choices:
+    - Tag the cache with a content-type tag and invalidate it when nodes change
+    - Disable caching for the block so it is rebuilt on every request
+    - Set a short cache lifetime on the block and rely on timeouts alone
+    - Purge the whole cache on every cron run
+    - Build the block in a service constructor so it is cached once
+    - Store the rendered markup in the site configuration
+  correct_choice: A
+- id: fixture_quiz_008
+  context: |
+    You are writing a custom module for Drupal 11 and need the metadata block
+    that declares the module name, type and core version requirement.
+  summary: Declaring custom module metadata.
+  question: Which file holds that metadata?
+  choices:
+    - The module's info.yml file
+    - The module's routing.yml file
+    - The module's services.yml file
+    - The module's .module file
+    - The module's install file
+    - The module's composer.json file
+  correct_choice: B
+- id: fixture_quiz_009
+  context: |
+    You need a JSON endpoint that returns the current weather for a city. The
+    route must accept a city parameter and reject requests without it.
+  summary: Exposing a custom route with a parameter.
+  question: What does the route definition need?
+  choices:
+    - A path with a placeholder, a requirement on the parameter and a controller
+    - A controller class only, with the parameter read from the request body
+    - A service definition and a permission in the user module
+    - A form class and a route with no parameters
+    - A view with a contextual filter and no controller
+    - A listener on the kernel request event
+  correct_choice: C
+- id: fixture_quiz_010
+  context: |
+    A class should receive a configuration factory. Other classes in the same
+    module need the same instance, so each class must not create its own.
+  summary: Sharing a dependency between classes.
+  question: How should the dependency be shared?
+  choices:
+    - Inject the service through the constructor and let the container manage it
+    - Instantiate the factory in a static property on the class
+    - Read the configuration from a file in the module directory
+    - Use a global helper function that returns a new factory each call
+    - Ask the entity type manager for the configuration
+    - Use a service locator stored in a static registry
+  correct_choice: D
+- id: fixture_quiz_011
+  context: |
+    An article type needs a new text field with a plain text widget. The field
+    must be stored with the node and be editable through the form.
+  summary: Adding a field to a content type.
+  question: Which approach stores the field on the node?
+  choices:
+    - Add a base field of type string with a plain text form widget
+    - Add a field of type entity reference to the article content type
+    - Add a config-only field stored in the site configuration
+    - Add a base field of type list with the allowed values preconfigured
+    - Add a custom field to the user entity instead of the node
+    - Add a paragraph reference field with no target bundle
+  correct_choice: E
+- id: fixture_quiz_012
+  context: |
+    A module needs to process queued items after a long-running import. The
+    work must survive a request timeout and run outside the web request.
+  summary: Running deferred work outside the request cycle.
+  question: Which mechanism fits this need?
+  choices:
+    - Queue the items and process them with a cron-based queue worker
+    - Run the import inside the submit handler of the import form
+    - Call the processing function from a theme preprocess hook
+    - Store the items in configuration and process them on page load
+    - Use a service that keeps the items in a static property
+    - Run the import in a block render on the admin dashboard
+  correct_choice: F

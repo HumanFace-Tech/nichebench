@@ -1,0 +1,21 @@
+# Sanitized CI fixture for the quiz-v2 data contract.
+#
+# Generated from tests/fixtures/quiz/quiz_v2_fixture.yaml. This is not
+# the private quiz dataset: the text is synthetic and carries no private
+# questions. It exists so the CI data gates have a dataset to run on
+# when the private data submodule is not checked out.
+id: fixture_quiz_001
+dataset_version: quiz-v2
+context: |
+  You are building a Drupal module and need to read the current route path
+  from a service. You want a testable solution that does not hardcode paths.
+summary: Reading the current route from an injected service.
+question: Which approach reads the current route path in a service?
+choices:
+  - Inject the routing service and ask it for the current route match
+  - Read $_SERVER['REQUEST_URI'] and trim the base path by hand
+  - Store the path in a global variable during a route subscriber
+  - Call the path alias manager with a hardcoded alias for each page
+  - Use the site settings service to look up the path pattern
+  - Parse the request URI out of the kernel request object as a plain string
+correct_choice: A

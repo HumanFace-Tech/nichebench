@@ -9,6 +9,7 @@ from rich.console import Console
 
 from nichebench.config.nichebench_config import get_config
 from nichebench.core.discovery import discover_frameworks
+from nichebench.execution.dispatch import REMOVED_CATEGORIES, REMOVED_CATEGORY_MESSAGE
 from nichebench.execution.orchestrator import TestExecutor
 
 from ..rich_views.run_views import (
@@ -41,6 +42,12 @@ def all(
     ),
 ):
     """Run all test cases for a framework/category with configuration-driven models."""
+    if category in REMOVED_CATEGORIES:
+        # The code_agent prototype was removed: reject it before any config,
+        # directory or executor work happens.
+        console.print(f"[red]{REMOVED_CATEGORY_MESSAGE}[/red]")
+        raise typer.Exit(2)
+
     # Load environment variables from .env file
     load_dotenv()
 
@@ -76,6 +83,7 @@ def all(
         executor.mut_model_str,
         executor.judge_model_str,
         profile,
+        category=category,
         runtime_mode=eval_config.get("runtime_mode") if category == "runtime" else None,
     )
 

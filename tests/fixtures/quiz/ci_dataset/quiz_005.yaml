@@ -1,0 +1,21 @@
+# Sanitized CI fixture for the quiz-v2 data contract.
+#
+# Generated from tests/fixtures/quiz/quiz_v2_fixture.yaml. This is not
+# the private quiz dataset: the text is synthetic and carries no private
+# questions. It exists so the CI data gates have a dataset to run on
+# when the private data submodule is not checked out.
+id: fixture_quiz_005
+dataset_version: quiz-v2
+context: |
+  You need every published article, newest first, and you want the query to
+  use the index on the publishing date.
+summary: Loading nodes with an entity query.
+question: Which query gives the right result and stays indexable?
+choices:
+  - Use an entity query with a published condition and a date sort
+  - Load all nodes with no conditions and sort them in PHP
+  - Query the database table directly with a raw SQL statement
+  - Use a view with a relationship and no filters
+  - Load nodes through the node list builder with no pager
+  - Use a config export that stores the node list
+correct_choice: E

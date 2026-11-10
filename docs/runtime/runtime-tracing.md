@@ -112,7 +112,7 @@ something, the archive says so rather than filling the gap.
 ## Transport capture
 
 The cage reaches the provider through a proxy process so the harness sees the
-bytes. Only the transport base URL changes — the provider key, npm provider
+bytes. Only the transport base URL changes — the provider key, provider
 package, model id, prompt, tools, permissions, and sampling parameters are all
 preserved, and no SDK switch happens.
 
@@ -166,7 +166,7 @@ make no provider call.
 
 ## Agent timeline
 
-With capture enabled the cage runs `opencode run --pure --format json --thinking`
+With capture enabled the cage runs `opencode run --format json --thinking`
 (flags appended only in this mode; the non-capture command is unchanged). The
 journal then records, per part:
 
@@ -340,7 +340,7 @@ Capture tests are offline: local aiohttp stubs stand in for the provider, a fake
 stands in for OpenCode's session DB. No network, no Docker, no paid calls.
 
 An additional offline validation used the installed
-`nichebench/opencode-ddev:1.18.3` image, its bundled npm SDK, and a local model
+`nichebench/opencode-ddev:2.2.5` image, its bundled npm SDK, and a local model
 stub. It handled one title request and two agent requests, executed the incoming
 `bash` tool schema to write a marker, and confirmed the tool result in the next
 request. The returned `mut_output` contained only final assistant text. This is

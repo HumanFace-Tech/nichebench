@@ -1,0 +1,21 @@
+# Sanitized CI fixture for the quiz-v2 data contract.
+#
+# Generated from tests/fixtures/quiz/quiz_v2_fixture.yaml. This is not
+# the private quiz dataset: the text is synthetic and carries no private
+# questions. It exists so the CI data gates have a dataset to run on
+# when the private data submodule is not checked out.
+id: fixture_quiz_006
+dataset_version: quiz-v2
+context: |
+  A theme needs a different wrapper element for the teaser view of a node.
+  The change should not affect other themes.
+summary: Altering the markup of a template in one theme.
+question: What is the cleanest way to do this?
+choices:
+  - Add a preprocess function in the theme and override the template
+  - Edit the core template file in the profiles directory
+  - Add CSS that hides the original wrapper element
+  - Replace the core node template with a copy in the site theme
+  - Override the node view builder class in the site module
+  - Add a hook_entity_view_alter in the site module
+correct_choice: F

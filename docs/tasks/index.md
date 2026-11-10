@@ -1,14 +1,14 @@
 # Classic Task Documentation
 
-Non-runtime task categories for NicheBench. These tasks run without DDEV — MUT + judge only.
+Non-runtime task categories for NicheBench. These tasks run without DDEV. Quiz, code generation, and bug fixing use an LLM judge.
 
 ## Shelf Contents
 
 | Page | What It Covers |
 |---|---|
-| [Quiz Tasks](./quiz-tasks.md) | Static Q&A, multiple choice, LLM-as-a-Judge |
-| [Code Generation Tasks](./code-generation-tasks.md) | Single/multi-turn code generation with rubric-based judging |
-| [Bug Fixing Tasks](./bug-fixing-tasks.md) | Multi-turn bug fix conversations |
+| [Quiz Tasks](./quiz-tasks.md) | LLM-judged multiple choice with a parser audit cross-check |
+| [Code Generation Tasks](./code-generation-tasks.md) | Single-turn code generation with direct rubric judging |
+| [Bug Fixing Tasks](./bug-fixing-tasks.md) | Single-shot fixes with a finalization nudge |
 
 ## Task Categories
 

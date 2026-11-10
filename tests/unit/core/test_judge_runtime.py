@@ -150,8 +150,8 @@ def test_evaluate_test_runtime_low_score_fails():
     assert passed is False
 
 
-def test_evaluate_test_unknown_category_no_random():
-    """Unknown category must return overall_score=1.0 — never random."""
+def test_evaluate_test_unknown_category_fails_closed():
+    """Unknown category must fail closed — never random, never auto-passed."""
     runner = _make_judge_runner({})
     tc = _make_test_case({})
 
@@ -160,6 +160,9 @@ def test_evaluate_test_unknown_category_no_random():
         out, passed = runner.evaluate_test(tc, "some_future_category", "input", "output", None)
         results.add(out["overall_score"])
 
-    # Should always be 1.0, never random
-    assert results == {1.0}
-    assert passed is True
+    # Deterministic and fail-closed.
+    assert results == {0.0}
+    assert passed is False
+    assert out["pass"] is False
+    assert out["error"] == "unknown category"
+    assert out["error_kind"] == "config_error"

@@ -1,0 +1,21 @@
+# Sanitized CI fixture for the quiz-v2 data contract.
+#
+# Generated from tests/fixtures/quiz/quiz_v2_fixture.yaml. This is not
+# the private quiz dataset: the text is synthetic and carries no private
+# questions. It exists so the CI data gates have a dataset to run on
+# when the private data submodule is not checked out.
+id: fixture_quiz_012
+dataset_version: quiz-v2
+context: |
+  A module needs to process queued items after a long-running import. The
+  work must survive a request timeout and run outside the web request.
+summary: Running deferred work outside the request cycle.
+question: Which mechanism fits this need?
+choices:
+  - Queue the items and process them with a cron-based queue worker
+  - Run the import inside the submit handler of the import form
+  - Call the processing function from a theme preprocess hook
+  - Store the items in configuration and process them on page load
+  - Use a service that keeps the items in a static property
+  - Run the import in a block render on the admin dashboard
+correct_choice: F

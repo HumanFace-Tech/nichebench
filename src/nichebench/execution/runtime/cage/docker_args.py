@@ -187,7 +187,6 @@ def build_opencode_command(
         "opencode",
         image,
         "run",
-        "--pure",
         "--dangerously-skip-permissions",
         "--model",
         opencode_model_binding,

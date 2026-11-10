@@ -101,7 +101,7 @@ def pick_newest_session(sessions_dir: Path, session_ids: Set[str]) -> Optional[P
         sessions = [(d, d.stat().st_mtime) for d in sessions_dir.iterdir() if d.is_dir() and d.name in session_ids]
         if not sessions:
             return None
-        return sorted(sessions, key=lambda x: x[1], reverse=True)[0][0]
+        return max(sessions, key=lambda x: x[1])[0]
     except Exception:
         return None
 

@@ -1,0 +1,21 @@
+# Sanitized CI fixture for the quiz-v2 data contract.
+#
+# Generated from tests/fixtures/quiz/quiz_v2_fixture.yaml. This is not
+# the private quiz dataset: the text is synthetic and carries no private
+# questions. It exists so the CI data gates have a dataset to run on
+# when the private data submodule is not checked out.
+id: fixture_quiz_009
+dataset_version: quiz-v2
+context: |
+  You need a JSON endpoint that returns the current weather for a city. The
+  route must accept a city parameter and reject requests without it.
+summary: Exposing a custom route with a parameter.
+question: What does the route definition need?
+choices:
+  - A path with a placeholder, a requirement on the parameter and a controller
+  - A controller class only, with the parameter read from the request body
+  - A service definition and a permission in the user module
+  - A form class and a route with no parameters
+  - A view with a contextual filter and no controller
+  - A listener on the kernel request event
+correct_choice: C

@@ -1,0 +1,21 @@
+# Sanitized CI fixture for the quiz-v2 data contract.
+#
+# Generated from tests/fixtures/quiz/quiz_v2_fixture.yaml. This is not
+# the private quiz dataset: the text is synthetic and carries no private
+# questions. It exists so the CI data gates have a dataset to run on
+# when the private data submodule is not checked out.
+id: fixture_quiz_008
+dataset_version: quiz-v2
+context: |
+  You are writing a custom module for Drupal 11 and need the metadata block
+  that declares the module name, type and core version requirement.
+summary: Declaring custom module metadata.
+question: Which file holds that metadata?
+choices:
+  - The module's info.yml file
+  - The module's routing.yml file
+  - The module's services.yml file
+  - The module's .module file
+  - The module's install file
+  - The module's composer.json file
+correct_choice: B

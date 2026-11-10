@@ -13,9 +13,11 @@ This module does NOT own:
 
 import math
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+from nichebench.config.settings import resolve_judge_threshold
 from nichebench.execution.result import TestResult
+from nichebench.metrics.types import JUDGE_ERROR_CONFIG
 from nichebench.utils.io import save_json
 
 
@@ -60,8 +62,24 @@ def normalize_score(value: Any, default: float = 0.0) -> float:
     return default
 
 
+# Display-only partial band for code/bug results: a result that did not pass
+# but scored at least this is reported as "partial" instead of "fail".  The
+# pass/fail decision itself is ``result.passed`` (which already carries the
+# configured ``evaluation.judge_threshold``), so the band never overrides it.
+PARTIAL_SCORE_FLOOR = 0.33
+
+
 def categorize_result(result: TestResult) -> str:
-    """Categorize a result as pass/partial/fail based on judge score.
+    """Categorize a result as pass/partial/fail.
+
+    For ``quiz`` and everything outside code/bug the verdict is binary and
+    driven by ``result.passed``.  For ``code_generation`` / ``bug_fixing``
+    the pass flag is the single source of truth for pass/fail — a result
+    with ``passed=False`` is never reported as ``"pass"`` no matter what
+    score the judge output carries.  Partial is display-only: it applies
+    only when the result did not pass but its score reaches
+    ``PARTIAL_SCORE_FLOOR`` (``0.33``) and therefore shows real progress;
+    everything below that is a fail.
 
     Args:
         result: Completed TestResult object.
@@ -69,16 +87,15 @@ def categorize_result(result: TestResult) -> str:
     Returns:
         Category string: "pass", "partial", or "fail".
     """
+    if result.category == "quiz":
+        # Quiz verdicts are binary — never partial.
+        return "pass" if result.passed else "fail"
     if result.category in ("code_generation", "bug_fixing"):
-        judge_output = result.judge_output
-        if isinstance(judge_output, dict):
-            score = normalize_score(judge_output.get("overall_score"), 0.0)
-        else:
-            score = 1.0 if result.passed else 0.0
-
-        if score > 0.66:
+        if result.passed:
             return "pass"
-        if score >= 0.33:
+        judge_output = result.judge_output
+        score = normalize_score(judge_output.get("overall_score"), 0.0) if isinstance(judge_output, dict) else 0.0
+        if score >= PARTIAL_SCORE_FLOOR:
             return "partial"
         return "fail"
     return "pass" if result.passed else "fail"
@@ -122,8 +139,30 @@ def _extract_runtime_score(result: TestResult) -> float:
     return 1.0 if result.passed else 0.0
 
 
+def _extract_quiz_score(result: TestResult) -> float:
+    """Return the binary score of a quiz result.
+
+    Quiz verdicts carry a binary ``score`` (1.0 for a pass, 0.0 for a
+    fail), which by construction agrees with ``result.passed``.  A value
+    that is not binary is treated as unusable and the boolean verdict is
+    used instead, so the average always equals the pass rate.
+    """
+    judge_output = result.judge_output
+    if isinstance(judge_output, dict):
+        raw = judge_output.get("score")
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            score = normalize_score(raw, default=math.nan)
+            if not math.isnan(score) and score in (0.0, 1.0):
+                return score
+    return 1.0 if result.passed else 0.0
+
+
 def compute_average_score(results: List[TestResult], category: str) -> float:
     """Compute the average score across all results.
+
+    For ``code_generation`` / ``bug_fixing`` the average is taken over
+    ``judge_output["overall_score"]``; callers that separate judge-error
+    rows (see :func:`update_summary`) must pass only scored results here.
 
     Args:
         results: List of completed TestResult objects.
@@ -139,6 +178,8 @@ def compute_average_score(results: List[TestResult], category: str) -> float:
     for result in results:
         if category == "runtime":
             score = _extract_runtime_score(result)
+        elif category == "quiz":
+            score = _extract_quiz_score(result)
         elif category in ("code_generation", "bug_fixing", "code_agent"):
             judge_output = result.judge_output
             if isinstance(judge_output, dict):
@@ -150,6 +191,75 @@ def compute_average_score(results: List[TestResult], category: str) -> float:
         total_score += score
 
     return total_score / len(results)
+
+
+def _resolve_judge_method(results: List[TestResult]) -> str:
+    """Return the scoring method used for the run.
+
+    The first result that carries a method wins; ``llm`` is the fallback.
+    Quiz results carry ``llm`` too — the judge LLM is their authority.
+    """
+    for result in results:
+        method = getattr(result, "judge_method", None)
+        if method:
+            return str(method)
+    return "llm"
+
+
+def _resolve_dataset_version(results: List[TestResult]) -> Optional[str]:
+    """Return the first dataset version carried by the results (or ``None``)."""
+    for result in results:
+        version = getattr(result.test_case, "dataset_version", None)
+        if version:
+            return str(version)
+    return None
+
+
+def _collect_parse_failures(results: List[TestResult]) -> Tuple[int, Dict[str, int]]:
+    """Count quiz results whose parser cross-check found no single letter.
+
+    The parser runs on every quiz answer as an audit cross-check (it never
+    decides the score); a cross-check that could not select a letter is a
+    parse failure.  Returns a ``(count, breakdown)`` tuple where
+    ``breakdown`` maps a parse-failure reason to the number of results
+    carrying it.
+    """
+    breakdown: Dict[str, int] = {}
+    count = 0
+    for result in results:
+        judge_output = result.judge_output
+        if not isinstance(judge_output, dict):
+            continue
+        reason = judge_output.get("parse_reason")
+        if not reason or reason == "ok":
+            continue
+        count += 1
+        key = str(reason)
+        breakdown[key] = breakdown.get(key, 0) + 1
+    return count, breakdown
+
+
+def _is_judge_error(result: TestResult) -> bool:
+    """Return ``True`` when the result carries a ``judge_*`` error kind.
+
+    Such rows are judge infrastructure failures: they must be counted
+    separately and excluded from scoring (see :func:`update_summary`).
+    """
+    kind = getattr(result, "error_kind", None)
+    return isinstance(kind, str) and kind.startswith("judge_")
+
+
+def _is_config_error(result: TestResult) -> bool:
+    """Return ``True`` when the result carries the ``config_error`` kind.
+
+    Such rows are harness/configuration failures (an exception that escaped
+    the runners, an unknown category): like judge errors they say nothing
+    about the model, so they are counted separately — in ``config_errors``,
+    never folded into ``judge_errors`` — and excluded from scoring (see
+    :func:`update_summary`).
+    """
+    kind = getattr(result, "error_kind", None)
+    return kind == JUDGE_ERROR_CONFIG
 
 
 def update_summary(
@@ -169,6 +279,28 @@ def update_summary(
     Aggregates pass/partial/fail counts and average score across all results,
     then serializes the full summary including model configs and eval config.
 
+    Results whose ``error_kind`` starts with ``judge_`` are judge
+    infrastructure failures and results whose ``error_kind`` is
+    ``config_error`` are harness/configuration failures: both say nothing
+    about the model, so both are counted in ``attempted_total`` and in their
+    own bucket (``judge_errors`` / ``config_errors``) but excluded from
+    ``total``, the pass/partial/fail counts and ``avg_score``.  The two
+    buckets stay separate — a configuration failure is never reported as a
+    judge failure.  ``total`` therefore equals the scored count,
+    ``attempted_total`` the raw count, and ``avg_score`` is ``None`` when
+    nothing could be scored.
+
+    For the ``quiz`` category the counts and ``avg_score`` describe the
+    judge verdict: ``avg_score`` is the pass rate over the scored rows,
+    ``partial`` is always ``0``, and the parser cross-check taxonomy is
+    reported alongside.  The reported judge *configuration* is the real,
+    configured judge — quiz is judged by an LLM like every other category.
+
+    For the LLM-judged categories the reported ``config.evaluation`` block
+    always carries the effective ``judge_threshold`` — the configured value,
+    or the environment default when none is configured — so a later report
+    renders the run with the bar the run actually used.
+
     Args:
         results: List of completed TestResult objects.
         summary_path: Destination path for summary.json.
@@ -184,29 +316,51 @@ def update_summary(
     if not results:
         return
 
-    categorized = [categorize_result(r) for r in results]
+    judge_error_results = [r for r in results if _is_judge_error(r)]
+    config_error_results = [r for r in results if _is_config_error(r)]
+    excluded_ids = {id(r) for r in judge_error_results} | {id(r) for r in config_error_results}
+    scored_results = [r for r in results if id(r) not in excluded_ids]
+
+    categorized = [categorize_result(r) for r in scored_results]
     passed_count = sum(1 for c in categorized if c == "pass")
     partial_count = sum(1 for c in categorized if c == "partial")
     failed_count = sum(1 for c in categorized if c == "fail")
 
-    avg_score = compute_average_score(results, category)
+    avg_score: Optional[float] = compute_average_score(scored_results, category) if scored_results else None
+
+    parse_failures, parse_failure_reasons = _collect_parse_failures(scored_results)
+
+    # Record the effective pass threshold for the LLM-judged categories, so a
+    # later report renders the run with the bar the run actually used even if
+    # the environment default changes in between.  Quiz verdicts are
+    # exact-match and advertise no judge threshold.
+    evaluation_config = dict(eval_config)
+    if category in ("code_generation", "bug_fixing", "code_agent"):
+        evaluation_config["judge_threshold"] = resolve_judge_threshold(evaluation_config)
 
     summary = {
         "framework": framework,
         "category": category,
         "model": mut_model_str,
         "judge": judge_model_str,
+        "judge_method": _resolve_judge_method(results),
+        "dataset_version": _resolve_dataset_version(results),
         "profile": profile,
         "config": {
             "mut": mut_runner_model_config,
             "judge": judge_runner_model_config,
-            "evaluation": eval_config,
+            "evaluation": evaluation_config,
         },
-        "total": len(results),
+        "total": len(scored_results),
+        "attempted_total": len(results),
+        "judge_errors": len(judge_error_results),
+        "config_errors": len(config_error_results),
         "passed": passed_count,
         "partial": partial_count,
         "failed": failed_count,
         "avg_score": avg_score,
+        "parse_failures": parse_failures,
+        "parse_failure_reasons": parse_failure_reasons,
     }
 
     save_json(summary_path, summary)

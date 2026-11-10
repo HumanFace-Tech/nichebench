@@ -1,6 +1,6 @@
 import pytest
 
-from nichebench.providers.litellm_judge import LiteLLMJudge
+from nichebench.providers.litellm_judge import JudgeError, LiteLLMJudge
 
 
 class MockClient:
@@ -12,10 +12,28 @@ class MockClient:
         return {"model": model, "output": self._output}
 
 
+class ScriptedClient:
+    """Client returning scripted outputs in order, then repeating the last.
+
+    Counts every ``generate`` call so retry behaviour can be asserted.
+    """
+
+    def __init__(self, *outputs: str):
+        self.outputs = list(outputs)
+        self.calls = 0
+        self.prompts: list[str] = []
+
+    def generate(self, prompt: str, model: str, model_params=None):
+        self.calls += 1
+        self.prompts.append(prompt)
+        output = self.outputs.pop(0) if len(self.outputs) > 1 else self.outputs[0]
+        return {"model": model, "output": output}
+
+
 def test_score_quiz_with_valid_json_response():
-    """Test normal case with valid JSON from judge."""
-    json_response = '{"pass": true, "selected": "A", "score": 1, "explanation": "Correct choice"}'
-    client = MockClient(json_response)
+    """Happy path: the judge verdict is normalised and recomputed against gold."""
+    json_response = '{"pass": true, "selected": "B", "score": 1, "explanation": "Correct choice"}'
+    client = ScriptedClient(json_response)
     judge = LiteLLMJudge(client=client)
 
     result = judge.score_quiz(
@@ -23,24 +41,48 @@ def test_score_quiz_with_valid_json_response():
     )
 
     assert result["pass"] is True
-    assert result["selected"] == "A"
-    assert result["score"] == 1
+    assert result["selected"] == "B"
+    assert result["score"] == 1.0
+    assert result["overall_score"] == 1.0
     assert result["explanation"] == "Correct choice"
+    assert result["judge_pass"] is True
+    assert result["judge_pass_mismatch"] is False
+    assert result["attempts"] == 1
     assert "raw" in result
     assert result["raw"] == json_response
+    assert client.calls == 1
+
+
+def test_score_quiz_judge_pass_boolean_is_audit_only():
+    """A judge boolean that disagrees with its own ``selected`` never wins."""
+    response = '{"pass": true, "selected": "A", "score": 1, "explanation": "claims correct"}'
+    client = ScriptedClient(response)
+    judge = LiteLLMJudge(client=client)
+
+    result = judge.score_quiz(question="Q?", choices=["x", "y"], gold="B", candidate="A")
+
+    assert result["selected"] == "A"
+    assert result["pass"] is False  # selected A != gold B
+    assert result["score"] == 0.0
+    assert result["overall_score"] == 0.0
+    assert result["judge_pass"] is True
+    assert result["judge_pass_mismatch"] is True
+    # A valid but wrong answer is a legitimate verdict — never retried.
+    assert client.calls == 1
 
 
 def test_score_quiz_with_json_in_code_fences():
     """Test JSON extraction from code fences."""
     fenced_response = '```json\n{"pass": false, "selected": "C", "score": 0, "explanation": "Wrong"}\n```'
-    client = MockClient(fenced_response)
+    client = ScriptedClient(fenced_response)
     judge = LiteLLMJudge(client=client)
 
-    result = judge.score_quiz(question="Test", choices=["A", "B"], gold="A", candidate="C")
+    result = judge.score_quiz(question="Test", choices=["A", "B", "C"], gold="A", candidate="C")
 
     assert result["pass"] is False
     assert result["selected"] == "C"
-    assert result["score"] == 0
+    assert result["score"] == 0.0
+    assert result["attempts"] == 1
 
 
 def test_score_quiz_with_extra_text_around_json():
@@ -50,7 +92,7 @@ def test_score_quiz_with_extra_text_around_json():
         '{"pass": true, "selected": "B", "score": 1, "explanation": "Good reasoning"} '
         "Hope this helps!"
     )
-    client = MockClient(mixed_response)
+    client = ScriptedClient(mixed_response)
     judge = LiteLLMJudge(client=client)
 
     result = judge.score_quiz(question="Test", choices=["X", "Y"], gold="B", candidate="B")
@@ -60,48 +102,123 @@ def test_score_quiz_with_extra_text_around_json():
 
 
 def test_score_quiz_with_malformed_json():
-    """Test conservative fallback when judge returns malformed JSON."""
+    """Malformed JSON is retried, then raised as ``judge_invalid_json``."""
     bad_json = '{"pass": true, "selected": "A", "score": 1, "explanation": "Missing closing brace"'
-    client = MockClient(bad_json)
-    judge = LiteLLMJudge(client=client)
+    client = ScriptedClient(bad_json)
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
 
-    result = judge.score_quiz(question="Test", choices=["X"], gold="A", candidate="A")
+    with pytest.raises(JudgeError) as exc_info:
+        judge.score_quiz(question="Test", choices=["X", "Y"], gold="A", candidate="A")
 
-    # Should fall back to conservative failure
-    assert result["pass"] is False
-    assert result["score"] == 0
-    assert "Judge did not return structured JSON" in result["explanation"]
-    assert result["raw"] == bad_json
+    assert exc_info.value.kind == "judge_invalid_json"
+    assert exc_info.value.attempts == 3
+    assert client.calls == 3
+    assert exc_info.value.last_raw == bad_json
 
 
 def test_score_quiz_with_plain_text_response():
-    """Test fallback when judge returns plain text instead of JSON."""
+    """Plain text instead of JSON is retried, then raised as ``judge_invalid_json``."""
     text_response = "I think the answer is A but here's some reasoning about why"
-    client = MockClient(text_response)
-    judge = LiteLLMJudge(client=client)
+    client = ScriptedClient(text_response)
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
 
-    result = judge.score_quiz(question="Test", choices=["A", "B"], gold="A", candidate="B")
+    with pytest.raises(JudgeError) as exc_info:
+        judge.score_quiz(question="Test", choices=["A", "B"], gold="A", candidate="B")
 
-    assert result["pass"] is False
-    assert result["score"] == 0
-    assert result["selected"] == ""
-    assert "Judge did not return structured JSON" in result["explanation"]
+    assert exc_info.value.kind == "judge_invalid_json"
+    assert exc_info.value.attempts == 3
+    assert client.calls == 3
+
+
+def test_score_quiz_api_error_raises_judge_unavailable():
+    """``[Error: ...]`` payloads are retried, then raised as ``judge_unavailable``."""
+    client = ScriptedClient("[Error: LiteLLM error after 3 attempts: model_not_found]")
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    with pytest.raises(JudgeError) as exc_info:
+        judge.score_quiz(question="Test", choices=["A", "B"], gold="A", candidate="A")
+
+    assert exc_info.value.kind == "judge_unavailable"
+    assert exc_info.value.attempts == 3
+    assert client.calls == 3
+
+
+def test_score_quiz_missing_selected_raises_judge_missing_selected():
+    """A verdict without a usable ``selected`` is retried, then raised."""
+    response = '{"pass": false, "score": 0, "explanation": "forgot to pick"}'
+    client = ScriptedClient(response)
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    with pytest.raises(JudgeError) as exc_info:
+        judge.score_quiz(question="Test", choices=["A", "B"], gold="A", candidate="A")
+
+    assert exc_info.value.kind == "judge_missing_selected"
+    assert exc_info.value.attempts == 3
+    assert client.calls == 3
+
+
+@pytest.mark.parametrize("selected", ["", "   ", "Paris", "AB"])
+def test_score_quiz_unusable_selected_raises_judge_missing_selected(selected):
+    """Blank or non-letter ``selected`` values never count as a verdict."""
+    response = f'{{"pass": true, "selected": "{selected}", "score": 1}}'
+    judge = LiteLLMJudge(client=ScriptedClient(response), sleeper=lambda _: None)
+
+    with pytest.raises(JudgeError) as exc_info:
+        judge.score_quiz(question="Test", choices=["A", "B", "C"], gold="A", candidate="A")
+
+    assert exc_info.value.kind == "judge_missing_selected"
+
+
+def test_score_quiz_out_of_range_selected_raises_judge_out_of_range():
+    """A ``selected`` letter the quiz does not offer is retried, then raised."""
+    response = '{"pass": true, "selected": "Z", "score": 1, "explanation": "Z"}'
+    client = ScriptedClient(response)
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    with pytest.raises(JudgeError) as exc_info:
+        judge.score_quiz(question="Test", choices=["A", "B", "C", "D"], gold="A", candidate="A")
+
+    assert exc_info.value.kind == "judge_out_of_range"
+    assert exc_info.value.attempts == 3
+    assert client.calls == 3
+
+
+def test_score_quiz_out_of_range_then_valid_retries_once():
+    """One unusable attempt then a valid one → 2 attempts, success, one sleep."""
+    sleeps: list[float] = []
+    client = ScriptedClient(
+        '{"pass": true, "selected": "Z", "score": 1, "explanation": "Z"}',
+        '{"pass": true, "selected": "B", "score": 1, "explanation": "B"}',
+    )
+    judge = LiteLLMJudge(client=client, sleeper=sleeps.append, retry_delay=0.5)
+
+    result = judge.score_quiz(question="Test", choices=["A", "B", "C", "D"], gold="B", candidate="B")
+
+    assert result["pass"] is True
+    assert result["selected"] == "B"
+    assert result["attempts"] == 2
+    assert client.calls == 2
+    # Exponential backoff: one sleep of retry_delay * 2 ** 0 before attempt 2.
+    assert sleeps == [0.5]
+
+
+def test_score_quiz_lower_case_selected_is_normalised():
+    """``selected`` is normalised to a single upper-case letter before comparison."""
+    response = '{"pass": true, "selected": " b ", "score": 1, "explanation": "lower case"}'
+    result = LiteLLMJudge(client=ScriptedClient(response)).score_quiz(
+        question="Test", choices=["A", "B"], gold="B", candidate="B"
+    )
+
+    assert result["selected"] == "B"
+    assert result["pass"] is True
+    assert result["score"] == 1.0
 
 
 def test_score_quiz_with_system_prompt_injection():
     """Test that system prompts are properly included in judge prompts."""
     json_response = '{"pass": true, "selected": "A", "score": 1, "explanation": "Good"}'
 
-    class TrackingMockClient:
-        def __init__(self, output: str):
-            self._output = output
-            self.last_prompt: str = ""
-
-        def generate(self, prompt: str, model: str, model_params=None):
-            self.last_prompt = prompt
-            return {"model": model, "output": self._output}
-
-    client = TrackingMockClient(json_response)
+    client = ScriptedClient(json_response)
     judge = LiteLLMJudge(client=client)
 
     system_prompt = "You are a specialized Drupal expert judge."
@@ -110,26 +227,15 @@ def test_score_quiz_with_system_prompt_injection():
     )
 
     # Verify system prompt was included
-    assert system_prompt in client.last_prompt
-    assert "You are an evaluation judge." in client.last_prompt
+    assert system_prompt in client.prompts[0]
+    assert "You are an evaluation judge." in client.prompts[0]
     assert result["pass"] is True
 
 
 def test_score_quiz_prompt_structure():
     """Test that quiz prompts include all necessary components."""
 
-    class PromptCapturingClient:
-        def __init__(self):
-            self.captured_prompt: str = ""
-
-        def generate(self, prompt: str, model: str, model_params=None):
-            self.captured_prompt = prompt
-            return {
-                "model": model,
-                "output": '{"pass": true, "selected": "A", "score": 1, "explanation": "Test"}',
-            }
-
-    client = PromptCapturingClient()
+    client = ScriptedClient('{"pass": true, "selected": "B", "score": 1, "explanation": "Test"}')
     judge = LiteLLMJudge(client=client)
 
     judge.score_quiz(
@@ -139,7 +245,7 @@ def test_score_quiz_prompt_structure():
         candidate="The capital is Paris",
     )
 
-    prompt = client.captured_prompt
+    prompt = client.prompts[0]
     assert "Question: What is the capital of France?" in prompt
     assert "A. London" in prompt
     assert "B. Paris" in prompt
@@ -305,3 +411,42 @@ def test_score_runtime_api_error_raises():
             artifact_summary="diff",
             checklist_items=checklist,
         )
+
+
+def test_score_code_generation_accepts_criterion_alias():
+    """A judge that returns ``criterion`` instead of ``criteria`` is still usable."""
+    response = (
+        '{"criterion":[{"criterion":"c1","pass":true,"explanation":"ok"}],'
+        '"overall_score":1.0,"summary":"ok"}'
+    )
+    judge = LiteLLMJudge(client=MockClient(response))
+
+    result = judge.score_code_generation(
+        prompt="p",
+        generated_code="code",
+        checklist=["c1"],
+        model="mock",
+    )
+
+    assert len(result["criteria"]) == 1
+    assert result["overall_score"] == 1.0
+    assert result["summary"] == "ok"
+
+
+def test_score_bug_fixing_accepts_criterion_alias():
+    """The same alias applies to bug-fix judging."""
+    response = (
+        '{"criterion":[{"criterion":"c1","pass":false,"explanation":"missing"}],'
+        '"overall_score":0.0,"summary":"bad"}'
+    )
+    judge = LiteLLMJudge(client=MockClient(response))
+
+    result = judge.score_bug_fixing(
+        bug_description="b",
+        proposed_fix="f",
+        checklist=["c1"],
+        model="mock",
+    )
+
+    assert len(result["criteria"]) == 1
+    assert result["overall_score"] == 0.0

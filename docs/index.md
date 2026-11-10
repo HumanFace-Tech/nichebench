@@ -1,6 +1,6 @@
 # NicheBench Documentation
 
-NicheBench is a CLI benchmarking harness for evaluating LLMs on **framework-specific tasks**. Starting with Drupal, it features LLM-as-a-Judge evaluation, configuration-driven model management, and a Rich CLI for interactive reporting.
+NicheBench is a CLI benchmarking harness for evaluating LLMs on **framework-specific tasks**. Starting with Drupal, it supports judge-based quiz and code/bug evaluation, configuration-driven model management, and a Rich CLI.
 
 ## Docs Shelves
 
@@ -41,9 +41,9 @@ poetry run pytest -q tests/unit
 
 | Category | Type | Notes |
 |---|---|---|
-| `quiz` | Classic | Static Q&A, LLM-as-a-Judge |
-| `code_generation` | Classic | Single/multi-turn code gen, LLM-as-a-Judge |
-| `bug_fixing` | Classic | Multi-turn bug fix conversation |
+| `quiz` | Classic | LLM judge selects the answer letter; parser provides an audit cross-check |
+| `code_generation` | Classic | Single-turn code generation, LLM-as-a-Judge |
+| `bug_fixing` | Classic | Single-shot fix with a finalization nudge, LLM-as-a-Judge |
 | `drupal_runtime` | Runtime | Full agentic runtime on live DDEV. **Enable with** `evaluation.enable_runtime_tasks: true` |
 
 ## Quality Gates (Contributors)

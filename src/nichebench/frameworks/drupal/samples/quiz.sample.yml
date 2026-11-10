@@ -8,9 +8,13 @@ question: |
   { the multiple choice question - should test specific Drupal knowledge, best practices, or common scenarios that developers encounter }
 
 choices:
-  - A) { first option - could be a common misconception or wrong approach }
-  - B) { second option - might be partially correct but not the best practice }
-  - C) { third option - could be the correct answer }
-  - D) { fourth option - another plausible but incorrect approach }
+  - "{ first option - could be a common misconception or wrong approach }"
+  - "{ second option - might be partially correct but not the best practice }"
+  - "{ third option - could be the correct answer }"
+  - "{ fourth option - another plausible but incorrect approach }"
+  - "{ fifth option - a tempting but deprecated approach }"
+  - "{ sixth option - an edge case that is not the best practice }"
 
 correct_choice: C
+
+dataset_version: quiz-v2

@@ -19,13 +19,12 @@ Operational guidance for contributors. For system architecture, see [docs/archit
 
 | Category | Status | Notes |
 |---|---|---|
-| `quiz` | ✅ Active | Static Q&A, LLM-as-a-Judge |
-| `code_generation` | ✅ Active | Single/multi-turn code gen, LLM-as-a-Judge |
-| `bug_fixing` | ✅ Active | Multi-turn bug fix conversation |
-| `code_agent` | ⛔ Deprecated | Early agentic prototype — no real env, no checks pipeline. Do not add tasks here. |
+| `quiz` | ✅ Active | LLM-judged multiple choice; parser result is recorded for audit |
+| `code_generation` | ✅ Active | Single-turn code generation, direct LLM judge |
+| `bug_fixing` | ✅ Active | Single-shot fix plus finalization nudge |
 | `runtime` (`drupal_runtime`) | ✅ Active | Full agentic runtime on live DDEV. Canonical agentic type. |
 
-`drupal_runtime` is the correct model for all new agentic tasks.
+The deprecated `code_agent` prototype has been removed. Use `drupal_runtime` for all new agentic tasks. Existing result files and historical records remain unchanged.
 
 ---
 
@@ -41,8 +40,8 @@ src/nichebench/
       executor/     runtime execution stages and flow
       trajectory/   session files, sqlite, polling, debug_dump
       artifacts/    persistence, validation, tool_policy
-  providers/        LiteLLM client, judge adapter, langgraph code agent
-  metrics/          DeepEval-compatible metric classes
+  providers/        LiteLLM client and judge adapter
+  metrics/          quiz answer parser (audit-only); direct LiteLLM judge for quiz/code/bug (no DeepEval)
   frameworks/
     drupal/         Classic tasks (quiz, code_generation, bug_fixing)
       data/         → submodule: nichebench-data-drupal (private)
@@ -86,14 +85,11 @@ poetry run mypy src
 
 ## Scoring Quick Reference
 
-| Score | Source | Formula |
-|---|---|---|
-| **Deterministic** | Checks defined in manifest | `passed_checks / total_checks` |
-| **Judge** | LLM judge evaluating artifact bundle | Per rubric in manifest |
-| **Hybrid** | Weighted blend | `deterministic_weight × deterministic + judge_weight × judge` |
+- **Quiz:** `LiteLLMJudge.score_quiz` selects a letter from the candidate answer; NicheBench compares that letter with the gold letter for a binary score. The deterministic parser is an audit cross-check only and never decides the score. `--judge` selects the quiz judge model.
+- **Quiz, code generation, and bug fixing:** judge calls retry up to 3 times on transient or parse failures. Exhausted quiz failures (`judge_unavailable`, `judge_invalid_json`, `judge_missing_selected`, or `judge_out_of_range`) are counted as `judge_errors` and excluded from quiz averages. Code/bug use direct `LiteLLMJudge` rubric evaluation (no DeepEval); NicheBench recomputes and clamps the score from criteria (true=1, partial=0.5, false/missing=0), and excludes judge-error rows from averages.
+- **Runtime:** deterministic checks and judge score form a weighted hybrid. Any critical check failure sets `passed=False`; the default threshold is `0.7`.
 
-- Any critical check failure → `passed=False` regardless of score
-- Default threshold: `0.7`
+Quiz data choices are plain text without letter prefixes. The quiz data repair and rebalance was applied in the private data repo. `dataset_version: quiz-v2`; distribution is A=25 and B–F=24 each. Do not add prefixes, truncate choices, or introduce mappings.
 
 See [docs/runtime/runtime-reporting-scoring.md](../docs/runtime/runtime-reporting-scoring.md) for full detail.
 
@@ -149,7 +145,11 @@ CI does **not** run runtime smoke. It only runs the unit gates above.
 
 ## Dependency Notes
 
-`litellm` is pinned to `>=1.89.1,<1.90`. Do not widen this range without testing. The upper bound guards against breaking API changes that affect both MUT and judge call paths.
+The project targets Python **3.13–3.14** (`>=3.13,<3.15`). `litellm` is pinned
+to `==1.106.7`; do not change it without testing the MUT and judge call paths.
+`pandas` and `pyarrow` were removed as unused. `ruff` uses an explicit `select`
+list (not `extend-select`) so newer Ruff releases do not silently expand the
+rule set.
 
 ---
 

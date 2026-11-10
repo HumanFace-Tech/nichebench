@@ -7,7 +7,7 @@ from rich.console import Console
 
 from nichebench.core.discovery import discover_frameworks
 
-from ..rich_views.tables import render_case_panel
+from ..rich_views.tables import render_case_panel, sort_task_specs
 
 app = typer.Typer()
 console = Console()
@@ -20,7 +20,11 @@ def case(test_id: str = typer.Argument(..., help="Test case id")):
     frameworks = discover_frameworks(root)
     found = None
     for framework_name, tasklist in frameworks.items():
-        for ts in tasklist:
+        # Scan in the canonical category order so the lookup is deterministic
+        # when the same id exists in more than one category.  Deprecated
+        # categories stay reachable through ``show`` even though they are
+        # hidden from the listings.
+        for ts in sort_task_specs(tasklist, include_deprecated=True):
             for tc in ts.testcases:
                 if tc.id == test_id:
                     found = (framework_name, ts, tc)

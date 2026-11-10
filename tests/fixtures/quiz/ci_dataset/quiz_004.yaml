@@ -1,0 +1,21 @@
+# Sanitized CI fixture for the quiz-v2 data contract.
+#
+# Generated from tests/fixtures/quiz/quiz_v2_fixture.yaml. This is not
+# the private quiz dataset: the text is synthetic and carries no private
+# questions. It exists so the CI data gates have a dataset to run on
+# when the private data submodule is not checked out.
+id: fixture_quiz_004
+dataset_version: quiz-v2
+context: |
+  A contact form should show a message when the submitted email address is
+  not valid. The check must run before the form is submitted to the backend.
+summary: Validating a form field.
+question: Where should the validation logic live?
+choices:
+  - In the form's validate method, so it runs before submission
+  - In the form's submit method, so it runs after submission
+  - In a theme function that inspects the submitted values
+  - In a service that is called from a kernel event subscriber
+  - In a JavaScript file that blocks the submit button
+  - In a constraint on the entity, applied after the form is submitted
+correct_choice: D

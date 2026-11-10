@@ -3,16 +3,23 @@
 Extracts prompt loading, model binding, provider key derivation, and cage
 opencode.json generation from the orchestrator.
 
+The generated cage config is native **OpenCode V2** — the ``providers`` object,
+the ordered ``permissions`` array, the ``agents`` object and the
+``https://opencode.ai/config.json`` schema. No V1 keys (``provider``,
+``permission``, ``mode``, ``agent``, ``small_model``) are emitted.
+
 Provider remapping
 -----------------
 OpenCode natively supports a fixed set of providers (openai, anthropic, groq, etc.).
 For any other provider (e.g. "llamacpp", "openrouter"), the harness remaps it to
-"openai" with ``options.baseURL`` set to the provider's API base URL.  The cage
-then routes requests through the compatible npm provider package.
+a derived provider key with ``settings.baseURL`` set to the provider's API base
+URL. The cage then routes requests through the compatible provider package
+(``aisdk:@ai-sdk/openai-compatible`` by default).
 
 Prompt / model binding
 ----------------------
-- System prompt is loaded from ``prompts/executor.yaml`` (cage_opencode_prompt key).
+- System prompt is loaded from ``prompts/executor.yaml`` (cage_opencode_prompt key)
+  and published as ``agents.build.system``.
 - Model binding is resolved in order: CLI ``--model`` flag > runtime config
   ``runtime_opencode_model`` > MUT provider/model defaults.
 - Per-model token limits (``runtime_opencode_model_limits``) override global limits.
@@ -28,10 +35,10 @@ Model metadata source
 ``runtime_opencode_model_config_file`` points at a host-side OpenCode config
 file (e.g. the project ``opencode.jsonc``) that declares model metadata the
 pinned cage runtime does not ship with. Only the selected entry
-``provider[<effective provider key>].models[<selected model id>]`` is read,
+``providers[<effective provider key>].models[<selected model id>]`` is read,
 and only the fields listed in ``SUPPORTED_MODEL_METADATA_FIELDS`` are
 propagated. Everything else in that file — permissions, agents, plugins,
-provider options, credentials — is discarded so nothing can leak into the
+provider settings, credentials — is discarded so nothing can leak into the
 cage. Runtime token limits are applied on top of the imported entry.
 
 Ownership boundaries
@@ -48,15 +55,21 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from nichebench.core.prompt_loader import load_prompt_text
 
 # Path to executor prompts YAML
 PROMPTS_PATH = Path(__file__).resolve().parent / "prompts" / "executor.yaml"
 
+# OpenCode V2 config schema
+OPENCODE_V2_SCHEMA = "https://opencode.ai/config.json"
+
+# Default V2 provider package for OpenAI-compatible endpoints
+DEFAULT_PROVIDER_PACKAGE = "aisdk:@ai-sdk/openai-compatible"
+
 # Providers that OpenCode recognises natively. Any other provider (e.g.
-# "llamacpp") must be remapped to "openai" with options.baseURL when an
+# "llamacpp") must be remapped to a derived key with settings.baseURL when an
 # api_base is configured.
 OPENCODE_NATIVE_PROVIDERS: frozenset[str] = frozenset(
     {
@@ -77,21 +90,48 @@ OPENCODE_NATIVE_PROVIDERS: frozenset[str] = frozenset(
     }
 )
 
+# V2 model fields that may be copied from a host-side model declaration into
+# the cage. ``settings``/``headers``/``body``/``package``/``variants`` are
+# deliberately excluded: they can carry credentials or per-request overrides
+# that must never reach the cage.
 SUPPORTED_MODEL_METADATA_FIELDS: tuple[str, ...] = (
-    "id",
-    "name",
+    "modelID",
+    "type",
     "family",
-    "release_date",
-    "attachment",
-    "reasoning",
-    "temperature",
-    "tool_call",
-    "interleaved",
+    "name",
+    "releaseDate",
+    "compatibility",
+    "capabilities",
     "cost",
+    "disabled",
     "limit",
-    "modalities",
-    "experimental",
-    "status",
+)
+
+# V2 permission actions granted to the cage agent on any resource.
+CAGE_ALLOWED_ACTIONS: tuple[str, ...] = (
+    "read",
+    "edit",
+    "glob",
+    "grep",
+    "shell",
+    "todo",
+)
+
+# V2 permission actions denied to the cage agent on any resource.
+CAGE_DENIED_ACTIONS: tuple[str, ...] = (
+    "question",
+    "subagent",
+    "skill",
+    "webfetch",
+    "websearch",
+)
+
+# Directories the cage agent may reach outside the workspace.
+CAGE_EXTERNAL_DIRECTORIES: tuple[str, ...] = (
+    "/tmp",
+    "/tmp/opencode",
+    "/nichebench/islands",
+    "/nichebench/state",
 )
 
 
@@ -107,8 +147,8 @@ def load_review_nudge() -> str:
     )
 
 
-def derive_cage_npm_provider_key(opencode_provider: str, runtime_config: Dict[str, Any]) -> str:
-    """Derive the provider key used in opencode.json and --model flag for npm-based cage runs.
+def derive_cage_provider_key(opencode_provider: str, runtime_config: Dict[str, Any]) -> str:
+    """Derive the provider key used in opencode.json and --model flag for remapped cage runs.
 
     Uses ``runtime_opencode_provider_name`` when set, otherwise sanitizes the
     original provider name to a key-safe string.
@@ -189,7 +229,7 @@ def get_provider_api_keys(provider: str) -> Dict[str, str]:
 
 
 def read_workspace_system_prompt(workspace_path: Path) -> Optional[str]:
-    """Extract ``mode.build.prompt`` from workspace ``opencode.json``."""
+    """Extract ``agents.build.system`` from workspace ``opencode.json``."""
     opencode_json_path = workspace_path / "opencode.json"
     if not opencode_json_path.exists():
         return None
@@ -197,11 +237,13 @@ def read_workspace_system_prompt(workspace_path: Path) -> Optional[str]:
     try:
         config = json.loads(opencode_json_path.read_text(encoding="utf-8"))
         if isinstance(config, dict):
-            mode = config.get("mode", {})
-            if isinstance(mode, dict):
-                build = mode.get("build", {})
+            agents = config.get("agents", {})
+            if isinstance(agents, dict):
+                build = agents.get("build", {})
                 if isinstance(build, dict):
-                    return build.get("prompt")
+                    system = build.get("system")
+                    if isinstance(system, str):
+                        return system
     except Exception:
         pass
 
@@ -215,7 +257,7 @@ def load_model_metadata_from_config_file(
 ) -> Dict[str, Any]:
     """Load model metadata for one model from a host-side OpenCode config file.
 
-    Reads only ``provider[<effective_provider_key>].models[<opencode_model_id>]``
+    Reads only ``providers[<effective_provider_key>].models[<opencode_model_id>]``
     and keeps only fields in :data:`SUPPORTED_MODEL_METADATA_FIELDS`. The path is
     resolved independently of the task workspace so a project-level declaration
     can be imported without being mounted into the cage.
@@ -241,9 +283,9 @@ def load_model_metadata_from_config_file(
     if not isinstance(raw, dict):
         raise ValueError(f"runtime_opencode_model_config_file {source} must contain a JSON object at the root")
 
-    providers = raw.get("provider")
+    providers = raw.get("providers")
     if not isinstance(providers, dict):
-        raise ValueError(f"runtime_opencode_model_config_file {source} has no 'provider' object")
+        raise ValueError(f"runtime_opencode_model_config_file {source} has no 'providers' object")
 
     provider_block = providers.get(effective_provider_key)
     if not isinstance(provider_block, dict):
@@ -268,6 +310,27 @@ def load_model_metadata_from_config_file(
     return {key: value for key, value in metadata.items() if key in SUPPORTED_MODEL_METADATA_FIELDS}
 
 
+def build_cage_permissions(workspace_host_path: Path) -> List[Dict[str, str]]:
+    """Build the ordered V2 ``permissions`` array for the cage.
+
+    Default-deny first, then the explicit allow/deny grants. ``external_directory``
+    resources are directory globs (``<path>/*``) as required by V2.
+    """
+    rules: List[Dict[str, str]] = [{"action": "*", "resource": "*", "effect": "deny"}]
+
+    for action in CAGE_ALLOWED_ACTIONS:
+        rules.append({"action": action, "resource": "*", "effect": "allow"})
+
+    for action in CAGE_DENIED_ACTIONS:
+        rules.append({"action": action, "resource": "*", "effect": "deny"})
+
+    external_paths = [str(workspace_host_path), *CAGE_EXTERNAL_DIRECTORIES]
+    for path in external_paths:
+        rules.append({"action": "external_directory", "resource": f"{path}/*", "effect": "allow"})
+
+    return rules
+
+
 def write_cage_opencode_json(
     workspace_host_path: Path,
     opencode_provider: str,
@@ -275,7 +338,7 @@ def write_cage_opencode_json(
     api_base: Optional[str] = None,
     runtime_config: Optional[Dict[str, Any]] = None,
 ) -> Path:
-    """Write cage-run opencode.json in workspace root."""
+    """Write cage-run opencode.json (native OpenCode V2) in workspace root."""
     cfg = runtime_config or {}
     prompt = load_prompt_text(
         PROMPTS_PATH,
@@ -308,7 +371,7 @@ def write_cage_opencode_json(
         ratio = float(cfg.get("runtime_opencode_output_ratio", 0.5))
         output_limit = int(int(context_limit) * ratio)
 
-    effective_key = derive_cage_npm_provider_key(opencode_provider, cfg) if api_base else opencode_provider
+    effective_key = derive_cage_provider_key(opencode_provider, cfg) if api_base else opencode_provider
 
     model_entry: Dict[str, Any] = {}
     model_config_file = cfg.get("runtime_opencode_model_config_file")
@@ -329,30 +392,38 @@ def write_cage_opencode_json(
         merged_limit.update(limit)
         model_entry["limit"] = merged_limit
 
-    if api_base:
-        # npm-based @ai-sdk/openai-compatible provider block.
-        npm = str(cfg.get("runtime_opencode_provider_npm", "@ai-sdk/openai-compatible"))
-        provider_options: Dict[str, Any] = {"baseURL": api_base}
+    # Provider API key env var names (never the values).
+    env_names = sorted(get_provider_api_keys(opencode_provider))
 
+    if api_base:
+        # Remapped provider: V2 package + settings block.
+        package = str(cfg.get("runtime_opencode_provider_package", DEFAULT_PROVIDER_PACKAGE))
+
+        settings: Dict[str, Any] = {"baseURL": api_base}
         timeout_ms = cfg.get("runtime_opencode_timeout_ms")
         chunk_timeout_ms = cfg.get("runtime_opencode_chunk_timeout_ms")
         if timeout_ms is not None:
-            provider_options["timeout"] = int(timeout_ms)
+            settings["timeout"] = int(timeout_ms)
         if chunk_timeout_ms is not None:
-            provider_options["chunkTimeout"] = int(chunk_timeout_ms)
-
-        if cfg.get("runtime_opencode_set_cache_key"):
-            provider_options["setCacheKey"] = True
+            settings["chunkTimeout"] = int(chunk_timeout_ms)
 
         provider_block: Dict[str, Any] = {
             "name": effective_key,
-            "npm": npm,
+            "package": package,
+            "env": env_names,
             "models": {opencode_model_id: model_entry},
-            "options": provider_options,
+            "settings": settings,
         }
+
+        if cfg.get("runtime_opencode_supports_prompt_cache_key"):
+            provider_block["compatibility"] = {"supportsPromptCacheKey": True}
     else:
         # Native provider — simple model registration.
-        provider_block = {"models": {opencode_model_id: model_entry}}
+        provider_block = {
+            "name": effective_key,
+            "env": env_names,
+            "models": {opencode_model_id: model_entry},
+        }
 
     # Optional compaction block.
     compaction_block: Dict[str, Any] = {}
@@ -364,50 +435,21 @@ def write_cage_opencode_json(
     if compaction_prune is not None:
         compaction_block["prune"] = bool(compaction_prune)
     if compaction_reserved is not None:
-        compaction_block["reserved"] = int(compaction_reserved)
+        compaction_block["buffer"] = int(compaction_reserved)
 
     model_binding = f"{effective_key}/{opencode_model_id}"
     config: Dict[str, Any] = {
-        "$schema": "https://opencode.ai/config.schema.json",
+        "$schema": OPENCODE_V2_SCHEMA,
         "model": model_binding,
-        "small_model": model_binding,
         "default_agent": "build",
-        "permission": {
-            "*": "deny",
-            "bash": "allow",
-            "read": "allow",
-            "edit": "allow",
-            "glob": "allow",
-            "grep": "allow",
-            "write": "allow",
-            "list": "allow",
-            "patch": "allow",
-            "todowrite": "allow",
-            "todoread": "allow",
-            "question": "deny",
-            "task": "deny",
-            "skill": "deny",
-            "webfetch": "deny",
-            "websearch": "deny",
-            "external_directory": {
-                str(workspace_host_path): "allow",
-                "/tmp": "allow",
-                "/tmp/opencode": "allow",
-                "/nichebench/islands": "allow",
-                "/nichebench/state": "allow",
-            },
-        },
-        "mode": {
+        "permissions": build_cage_permissions(workspace_host_path),
+        "agents": {
             "build": {
-                "prompt": prompt,
+                "system": prompt,
+                "mode": "primary",
             }
         },
-        "agent": {
-            "build": {
-                "prompt": prompt,
-            }
-        },
-        "provider": {
+        "providers": {
             effective_key: provider_block,
         },
     }

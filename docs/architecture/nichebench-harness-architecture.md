@@ -23,8 +23,8 @@ nichebench/
 │   │   │   └── wrappers/       #   cage git/bash wrapper scripts
 │   │   ├── diagnostics/        # RuntimeTrace + forensics (post-hoc analysis)
 │   │   └── runners/            # mut.py (MUT runner), judge.py (judge runner)
-│   ├── providers/              # litellm_client, litellm_judge, langgraph agent
-│   ├── metrics/                # DeepEval-compatible metric classes
+│   ├── providers/              # LiteLLM client and judge adapter
+│   ├── metrics/                # Quiz parser for audit + direct LiteLLM judge for quiz/code/bug; no DeepEval
 │   ├── frameworks/
 │   │   ├── drupal/             # Classic Drupal tasks (quiz, code_gen, bug_fixing)
 │   │   │   ├── data/           # → submodule: nichebench-data-drupal (private)
@@ -68,7 +68,8 @@ nichebench/
 │   bug_fixing)      │  │                             │
 │                    │  │  execution/runtime/         │
 │  MUT → response    │  │  workspace/ddev.py          │
-│  → judge → score   │  │  runtime/checks.py          │
+│  quiz: judge       │  │  runtime/checks.py          │
+│  code/bug: judge   │  │                             │
 │                    │  │  runtime/executor/          │
 └────────────────────┘  └─────────────────────────────┘
 ```
@@ -84,14 +85,16 @@ manifest YAML
 MUT prompt (framework prompt + context + question)
     │
     ▼
-LLM response (single or multi-turn conversation)
+LLM response (single-turn code generation; bug-fix response plus finalization nudge)
     │
     ▼
-Judge evaluation (LLM-as-a-Judge with rubric checklist)
+Quiz: LiteLLMJudge selects a letter; parser records an audit cross-check. Code/bug: direct LiteLLMJudge rubric call.
     │
     ▼
-Score (Pass >66% / Partial 33-66% / Fail <33%)
+Quiz: judge-selected letter compared with gold for binary pass/fail; code/bug: criteria recompute → clamped score
 ```
+
+Quiz, code, and bug judge requests retry up to 3 times after transient or parse failures. Quiz compares the judge-selected letter with gold; its deterministic parser output (`selected`, `parse_reason`, `agrees`) is audit-only. Quiz results record `judge_method="llm"` and the configured judge model; `judge_score` and `final_score` are binary and `deterministic_score` is null. Exhausted quiz judge failures use `judge_unavailable`, `judge_invalid_json`, `judge_missing_selected`, or `judge_out_of_range`, count as `judge_errors`, and are excluded from quiz averages. Code/bug judge failures use `judge_unavailable` or `judge_invalid_json` and are also excluded from averages. Harness/configuration failures use `error_kind=config_error`; they are reported as `config_errors`, separately from `judge_errors`. `judge_overall_score` is retained for audit only; code/bug `judge_score` and `final_score` use the recomputed criteria score.
 
 ---
 
@@ -137,7 +140,7 @@ optional LLM judge ──► hybrid score
 
 See [Runtime Reporting & Scoring](../runtime/runtime-reporting-scoring.md) for full detail.
 
-### Score Types
+### Runtime score types
 
 | Score | Source | Formula |
 |---|---|---|
@@ -145,7 +148,7 @@ See [Runtime Reporting & Scoring](../runtime/runtime-reporting-scoring.md) for f
 | **Judge** | LLM judge evaluating artifact bundle | Per rubric in manifest |
 | **Hybrid** | Weighted blend | `deterministic_weight × deterministic + judge_weight × judge` |
 
-Default weights: 70% deterministic / 30% judge. Weights are set per-manifest.
+Runtime default weights are 70% deterministic and 30% judge. Weights are set per manifest. Classic code-generation and bug-fixing tasks do not use this hybrid score.
 
 ### Critical Gate
 
@@ -192,14 +195,16 @@ evaluation:
   runtime_keep_workspaces: false
   runtime_container_enable_ddev: true
   runtime_container_ddev_auto_build: true
-  runtime_container_ddev_image: nichebench/opencode-ddev:1.18.3
+  runtime_container_ddev_image: nichebench/opencode-ddev:2.2.5
 ```
 
 ---
 
 ## Dependency Notes
 
-`litellm` is pinned to `>=1.89.1,<1.90`. Do not widen this range without testing. The upper bound guards against breaking API changes that affect both MUT and judge call paths.
+The planned `litellm` security pin is `==1.106.7`. Do not change the target without testing the MUT and judge call paths.
+
+The runtime cage uses the native OpenCode V2 `providers`/`permissions`/`agents` configuration with image `ghcr.io/anomalyco/opencode:2.2.5`. The derived `nichebench/opencode-ddev:2.2.5` image must be rebuilt from that base image; do not assume it is already built.
 
 ---
 

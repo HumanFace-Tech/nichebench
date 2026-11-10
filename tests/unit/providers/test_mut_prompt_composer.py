@@ -1,5 +1,7 @@
 """Unit tests for MUT prompt composition logic."""
 
+import pytest
+
 from nichebench.core.datamodel import TestCaseSpec
 from nichebench.providers.mut_prompt_composer import MUTPromptComposer
 
@@ -156,3 +158,67 @@ def test_compose_prompt_category_routing():
     # Test bug routing
     bug_prompt = MUTPromptComposer.compose_prompt(test_case, category="bug_fixing")
     assert "Your answer (letter only):" not in bug_prompt
+
+
+# ─── Bug conversation max_turns (manifest-driven) ─────────────────────────────
+
+
+def _bug_test_case(raw: dict) -> TestCaseSpec:
+    return TestCaseSpec(
+        id="bug_turns",
+        type="bug_fixing",
+        prompt="Fix the broken plugin.",
+        context="Drupal 11 project.",
+        raw=raw,
+    )
+
+
+def test_bug_conversation_defaults_to_four_turns():
+    """Without a manifest ``max_turns`` the conversation defaults to 4."""
+    conversation = MUTPromptComposer.start_bug_conversation(_bug_test_case({"prompt": "Fix the broken plugin."}))
+
+    assert conversation.max_turns == 4
+
+
+def test_bug_conversation_reads_max_turns_from_raw():
+    """``test_case.raw['max_turns']`` is honoured when within bounds."""
+    conversation = MUTPromptComposer.start_bug_conversation(
+        _bug_test_case({"prompt": "Fix the broken plugin.", "max_turns": 6})
+    )
+
+    assert conversation.max_turns == 6
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (0, 1),  # clamped up to the lower bound
+        (99, 8),  # clamped down to the upper bound
+        (-3, 1),
+        (1, 1),
+        (8, 8),
+        ("garbage", 4),  # unparseable → default
+        (None, 4),  # explicit null → default
+    ],
+)
+def test_bug_conversation_clamps_max_turns(value, expected):
+    """``max_turns`` is clamped to ``1..8``; unusable values fall back to 4."""
+    conversation = MUTPromptComposer.start_bug_conversation(
+        _bug_test_case({"prompt": "Fix the broken plugin.", "max_turns": value})
+    )
+
+    assert conversation.max_turns == expected
+
+
+def test_bug_conversation_keeps_prompt_composition():
+    """Reading ``max_turns`` must not change the composed initial prompt."""
+    conversation = MUTPromptComposer.start_bug_conversation(
+        _bug_test_case({"prompt": "Fix the broken plugin.", "max_turns": 3}),
+        system_prompt="You are a Drupal expert.",
+    )
+
+    assert conversation.turns[0].role == "system"
+    assert conversation.turns[0].content == "You are a Drupal expert."
+    assert conversation.turns[1].role == "user"
+    assert "Context: Drupal 11 project." in conversation.turns[1].content
+    assert "Fix the broken plugin." in conversation.turns[1].content

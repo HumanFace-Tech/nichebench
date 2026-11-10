@@ -17,6 +17,9 @@ Key boundaries
 =============
 * YAML parsing is delegated to ``yaml.safe_load``; callers do not need
   to know which PyYAML API is used.
+* Defensive normalisation: ``TestCaseSpec.choices`` is rendered to display
+  text and stripped of redundant letter prefixes (``A) text`` → ``text``).
+  The ``raw`` field always keeps the original values.
 * Runtime task detection: if a file sits under ``tasks/manifest/`` or has
   ``task_type: runtime`` it is processed by the runtime branch, which
   composes prompt/context from structured sub-fields (``description_structured``)
@@ -33,6 +36,24 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from nichebench.core.datamodel import TaskSpec, TestCaseSpec
+from nichebench.core.quiz_text import normalize_choices as _normalize_choices
+
+# Classic (non-runtime) task-type detection, in priority order: an explicit
+# ``task_type`` field wins, then the parent directory name, then top-level key
+# sniffing (see ``load_testcase_from_file``).  Values map to canonical
+# ``TestCaseSpec.type`` values: ``quiz``, ``code``, ``bug``.
+_TASK_TYPE_BY_EXPLICIT = {
+    "quiz": "quiz",
+    "code_generation": "code",
+    "code": "code",
+    "bug_fixing": "bug",
+    "bug": "bug",
+}
+_TASK_TYPE_BY_DIRECTORY = {
+    "quiz": "quiz",
+    "code_generation": "code",
+    "bug_fixing": "bug",
+}
 
 
 def _stringify_list(values: Any) -> str:
@@ -88,9 +109,12 @@ def load_testcase_from_file(path: Path) -> TestCaseSpec:
     * ``task_type: runtime`` or path under ``tasks/manifest/`` → runtime
       manifest branch: prompt is built from ``description_structured``,
       context from ``technical_hints``/``out_of_scope``.
-    * top-level ``question`` key → quiz
-    * top-level ``prompt`` key → code generation
-    * anything else → bug fixing
+    * otherwise the classic branch, in order: an explicit ``task_type``
+      (``quiz`` / ``code_generation`` / ``code`` / ``bug_fixing`` / ``bug``),
+      then the parent directory name (``quiz`` / ``code_generation`` /
+      ``bug_fixing``), then key sniffing (``question`` → quiz, ``prompt`` →
+      code, else bug).  A bug-fixing YAML with a top-level ``prompt`` under
+      ``bug_fixing/`` is therefore classified as ``bug``, not ``code``.
 
     Raises:
         ValueError: if the YAML root is not a mapping.
@@ -109,6 +133,7 @@ def load_testcase_from_file(path: Path) -> TestCaseSpec:
         source = data.get("source") if isinstance(data.get("source"), dict) else {}
         task_id = str(data.get("task_id") or data.get("id") or path.stem)
         prompt = data.get("prompt") or _compose_runtime_prompt(data)
+        raw_dataset_version = data.get("dataset_version")
         return TestCaseSpec(
             id=task_id,
             type="runtime",
@@ -116,6 +141,7 @@ def load_testcase_from_file(path: Path) -> TestCaseSpec:
             context=_compose_runtime_context(data.get("description_structured")),
             summary=str(data.get("title") or data.get("summary") or "") or None,
             prompt=prompt,
+            dataset_version=str(raw_dataset_version) if raw_dataset_version is not None else None,
             source=source or None,
             environment=data.get("environment") if isinstance(data.get("environment"), dict) else None,
             agent=data.get("agent") if isinstance(data.get("agent"), dict) else None,
@@ -130,15 +156,26 @@ def load_testcase_from_file(path: Path) -> TestCaseSpec:
             file_path=str(path),
         )
 
-    # Determine type
-    if "question" in data:
+    # Determine type: explicit task_type > parent directory name > key sniffing.
+    explicit_task_type = data.get("task_type")
+    if isinstance(explicit_task_type, str) and explicit_task_type in _TASK_TYPE_BY_EXPLICIT:
+        tc_type = _TASK_TYPE_BY_EXPLICIT[explicit_task_type]
+    elif path.parent.name in _TASK_TYPE_BY_DIRECTORY:
+        tc_type = _TASK_TYPE_BY_DIRECTORY[path.parent.name]
+    elif "question" in data:
         tc_type = "quiz"
     elif "prompt" in data:
         tc_type = "code"
-    elif "task_type" in data and data["task_type"] == "runtime":
-        tc_type = "runtime"
     else:
         tc_type = "bug"
+
+    raw_dataset_version = data.get("dataset_version")
+    if raw_dataset_version is not None:
+        dataset_version = str(raw_dataset_version)
+    elif tc_type == "quiz":
+        dataset_version = "quiz-v1"
+    else:
+        dataset_version = None
 
     return TestCaseSpec(
         id=str(data.get("id") or path.stem),
@@ -147,9 +184,10 @@ def load_testcase_from_file(path: Path) -> TestCaseSpec:
         context=data.get("context"),
         summary=data.get("summary"),
         prompt=data.get("prompt") or data.get("task_description"),
-        choices=data.get("choices"),
+        choices=_normalize_choices(data.get("choices")),
         correct_choice=data.get("correct_choice"),
         checklist=data.get("checklist") or data.get("judge_checklist") or data.get("solution_includes"),
+        dataset_version=dataset_version,
         source=data.get("source"),
         environment=data.get("environment"),
         agent=data.get("agent"),

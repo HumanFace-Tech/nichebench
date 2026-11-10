@@ -12,7 +12,7 @@ jobs:
 
     strategy:
       matrix:
-        python-version: [3.10.x, 3.11.x]
+        python-version: [3.13.x, 3.14.x]
 
     steps:
     - uses: actions/checkout@v4
@@ -43,6 +43,22 @@ jobs:
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
       run: poetry install --no-interaction --no-ansi
 
+    - name: Quiz v2 focused gates
+      run: poetry run pytest -q tests/unit/metrics/test_quiz_scorer.py tests/unit/core/test_quiz_prompt_v2.py tests/unit/core/test_judge_quiz_deterministic.py tests/unit/core/test_framework_loader_quiz_v2.py tests/unit/core/test_result_quiz_v2.py tests/unit/cli/test_quiz_cli_v2.py tests/unit/scripts/test_audit_quiz_data.py tests/unit/frameworks/test_quiz_data_contract.py
+
+    - name: Quiz data audit (CI fixture)
+      run: |
+        poetry run python scripts/audit_quiz_data.py \
+          --data-dir tests/fixtures/quiz/ci_dataset \
+          --json-out reports/quiz_v2_ci.json
+
+    - name: Quiz data audit (private data)
+      if: ${{ hashFiles('src/nichebench/frameworks/drupal/data/quiz/*.yaml') != '' }}
+      run: |
+        poetry run python scripts/audit_quiz_data.py \
+          --data-dir src/nichebench/frameworks/drupal/data/quiz \
+          --json-out reports/quiz_v2_ci.json
+
     - name: Run unit tests
       run: poetry run pytest -q tests/unit
 
@@ -53,7 +69,7 @@ jobs:
       run: poetry run mypy src
 
     - name: Verify release build and install
-      if: matrix.python-version == '3.11.x'
+      if: matrix.python-version == '3.14.x'
       run: |
         poetry build --format wheel
         release_venv="$RUNNER_TEMP/nichebench-release-venv"

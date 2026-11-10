@@ -579,7 +579,7 @@ class TestToDict:
 class TestReadWorkspaceSystemPrompt:
     def test_returns_prompt_from_opencode_json(self, tmp_path):
         cfg = tmp_path / "opencode.json"
-        cfg.write_text(json.dumps({"mode": {"build": {"prompt": "You are a helper."}}}))
+        cfg.write_text(json.dumps({"agents": {"build": {"system": "You are a helper."}}}))
         result = TestExecutor._read_workspace_system_prompt(tmp_path)
         assert result == "You are a helper."
 
@@ -589,7 +589,7 @@ class TestReadWorkspaceSystemPrompt:
 
     def test_returns_none_when_prompt_key_absent(self, tmp_path):
         cfg = tmp_path / "opencode.json"
-        cfg.write_text(json.dumps({"mode": {"build": {}}}))
+        cfg.write_text(json.dumps({"agents": {"build": {}}}))
         result = TestExecutor._read_workspace_system_prompt(tmp_path)
         assert result is None
 

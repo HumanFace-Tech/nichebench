@@ -147,7 +147,13 @@ class TestExecutor(RuntimeExecutionMixin):
         retry_delay = network_config.get("retry_delay", settings.retry_delay)
 
         self.mut_runner = MUTRunner(self.mut_model_str, mut_config, timeout, retry_attempts, retry_delay)
-        self.judge_runner = JudgeRunner(self.judge_model_str, judge_config, timeout, retry_attempts, retry_delay)
+        # The judge reads ``judge_threshold`` from this same dict, which
+        # ``run.py`` updates with the profile-merged evaluation config before
+        # any test executes.
+        self.judge_runner = JudgeRunner(
+            self.judge_model_str, judge_config, timeout, retry_attempts, retry_delay,
+            evaluation_config=self.evaluation_config,
+        )
 
         self.system_prompt = self._load_system_prompt()
         self.judge_system_prompt = self._load_judge_system_prompt()

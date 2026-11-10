@@ -6,7 +6,7 @@
 # - Alpine (apk)
 # - Fedora/RHEL/CentOS (dnf/yum)
 
-ARG BASE_IMAGE=ghcr.io/anomalyco/opencode:1.18.3
+ARG BASE_IMAGE=ghcr.io/anomalyco/opencode:2.2.5
 FROM ${BASE_IMAGE}
 
 # Pinned DDEV version for deterministic builds

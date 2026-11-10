@@ -1,6 +1,6 @@
 # NicheBench
 
-A CLI benchmarking harness for evaluating LLMs on **framework-specific tasks**. Starting with Drupal, it features LLM-as-a-Judge evaluation, configuration-driven model management, and a Rich CLI for interactive reporting.
+A CLI benchmarking harness for evaluating LLMs on **framework-specific tasks**. Starting with Drupal, it supports LLM-judged quiz, code-generation, and bug-fixing tasks, configuration-driven model management, and a Rich CLI.
 
 Provided by [HumanFace Tech](https://humanfacetech.com).
 
@@ -25,10 +25,12 @@ poetry run pytest -q tests/unit
 
 | Category | Type | Notes |
 |---|---|---|
-| `quiz` | Classic | Static Q&A, LLM-as-a-Judge |
-| `code_generation` | Classic | Single/multi-turn code gen, LLM-as-a-Judge |
-| `bug_fixing` | Classic | Multi-turn bug fix conversation |
+| `quiz` | Classic | LLM judge selects an answer letter; parser provides an audit cross-check |
+| `code_generation` | Classic | Single-turn code generation, LLM-as-a-Judge |
+| `bug_fixing` | Classic | Single-shot fix plus finalization nudge |
 | `drupal_runtime` | Runtime | Full agentic runtime on live DDEV |
+
+The deprecated `code_agent` prototype has been removed. Use `drupal_runtime` for new agentic benchmark tasks. Existing result files and historical records are not removed or invalidated by this change.
 
 **Runtime tasks are disabled by default.** Enable with `enable_runtime_tasks: true` in `nichebench.yml`.
 
@@ -89,16 +91,14 @@ git submodule update --init --recursive
 
 ## Scoring
 
-- **Deterministic** = passed checks / total checks
-- **Judge** = LLM judge evaluating artifact bundle
-- **Hybrid** = weighted blend (default 70% deterministic / 30% judge; configurable per manifest)
-- Any critical check failure → `passed=False`
-- Default threshold: `0.7`
+- **Quiz:** `LiteLLMJudge` selects a letter from the candidate answer, and NicheBench compares it with the gold letter for a binary score. The deterministic parser runs as an audit cross-check only. Judge calls retry up to 3 times after transient or parse failures; exhausted judge errors are counted and excluded from quiz averages. `--judge` selects the quiz judge model.
+- **Code generation and bug fixing:** a direct `LiteLLMJudge` call scores rubric criteria. NicheBench recomputes and clamps the score from those criteria. Judge requests get up to 3 attempts after transient or parse failures; judge errors are recorded and excluded from averages.
+- **Runtime:** deterministic checks and an optional LLM judge produce a weighted hybrid score. A critical check failure sets `passed=False`; the default threshold is `0.7`.
 
 See [docs/runtime/runtime-reporting-scoring.md](docs/runtime/runtime-reporting-scoring.md) for full detail.
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.13–3.14
 - Poetry for dependency management
 - `docker` and `ddev` for runtime tasks

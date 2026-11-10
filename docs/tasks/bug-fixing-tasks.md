@@ -1,6 +1,6 @@
 # Bug Fixing Tasks
 
-Bug fixing tasks evaluate an LLM's ability to diagnose and fix issues in existing code through a multi-turn conversation.
+Bug fixing tasks evaluate an LLM's ability to fix an issue in existing code. The MUT makes a single-shot fix, followed by a finalization nudge rather than a diagnostic dialogue.
 
 ## Format
 
@@ -28,22 +28,24 @@ judge_checklist:
 **MUT prompt** includes:
 - Project context and stack
 - Bug description
-- Multi-turn conversation (up to `max_turns`)
+- The requested fix
+- A finalization nudge to complete the proposed change
+
+The runner reads `max_turns` from the task manifest and clamps it to 1–8.
 
 **Judge prompt**:
-- Evaluates whether the MUT correctly diagnosed the root cause
-- Scores the fix quality and completeness
-- Checks that no regressions were introduced
+- `LiteLLMJudge.score_bug_fixing` evaluates the response against the rubric directly. DeepEval is not used.
+- NicheBench recomputes the score from criteria: true is 1, partial is 0.5, and false or missing is 0. The result is clamped to the valid score range.
+- Judge calls get up to 3 attempts after transient or parse failures. `final_score` is populated from the recomputed score. Judge errors are recorded and excluded from averages.
 
 ## Scoring
 
-- **Judge**: rubric scoring against `judge_checklist`
-- **Hybrid**: weighted blend with deterministic checks if defined
+- **Judge:** direct rubric scoring against `judge_checklist`. Classic bug-fixing scores are not a deterministic/judge hybrid.
 
 ## Use Case
 
 Bug fixing tasks test:
-- Diagnostic ability (reading logs, tracing execution)
+- Ability to produce a focused fix from the supplied context
 - Framework API knowledge
 - Surgical code changes vs. broad rewrites
 - Verification behavior (testing the fix)

@@ -325,3 +325,52 @@ def _contains_drupal_ids(text: str) -> bool:
     import re
 
     return bool(re.search(_DJANGO_ID_PATTERN, text, re.IGNORECASE))
+
+
+# ---------------------------------------------------------------------------
+# Infrastructure failures must not be scored as model failures
+# ---------------------------------------------------------------------------
+
+
+def test_harness_cli_flag_error_is_infrastructure():
+    from nichebench.execution.diagnostics.trace import is_infrastructure_failure
+
+    assert is_infrastructure_failure("runtime_execution", "Unrecognized flag: --pure in command opencode run")
+
+
+def test_image_build_and_credentials_errors_are_infrastructure():
+    from nichebench.execution.diagnostics.trace import is_infrastructure_failure
+
+    assert is_infrastructure_failure("runtime_execution", "Failed to build ddev-capable image")
+    assert is_infrastructure_failure("runtime_execution", "error getting credentials - err: exit status 1")
+
+
+def test_model_protocol_failure_is_not_infrastructure():
+    from nichebench.execution.diagnostics.trace import is_infrastructure_failure
+
+    assert not is_infrastructure_failure("model_protocol_compatibility", "invalid_request_error")
+
+
+def test_failure_shortcut_marks_harness_error_as_config_error():
+    from nichebench.core.datamodel import TestCaseSpec
+    from nichebench.execution.result import TestResult
+    from nichebench.execution.runtime.executor.failure_shortcut import apply_failure_shortcut
+
+    result = TestResult(
+        "drupal_runtime",
+        "runtime",
+        TestCaseSpec(id="rt", type="runtime", raw={}),
+        "model/x",
+        "judge/y",
+    )
+    trace = RuntimeTrace(test_id="rt")
+    apply_failure_shortcut(
+        result=result,
+        catastrophic_reason="Unrecognized flag: --pure in command opencode run",
+        diagnostics_enabled=True,
+        runtime_artifacts={},
+        trace=trace,
+    )
+    assert result.passed is False
+    assert result.error_kind == "config_error"
+    assert result.judge_output["error_kind"] == "config_error"

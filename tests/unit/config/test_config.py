@@ -4,6 +4,7 @@ import pytest
 import yaml
 
 from nichebench.config.nichebench_config import NicheBenchConfig
+from nichebench.config.settings import resolve_judge_threshold, settings
 
 
 def write_yaml(path: Path, data: dict):
@@ -157,6 +158,52 @@ def test_list_profiles_empty_and_populated(tmp_path):
     assert "reasoning" in profiles
     assert "anthropic" in profiles
     assert len(profiles) == 3
+
+
+def test_judge_threshold_is_part_of_the_effective_evaluation_config(tmp_path):
+    """``evaluation.judge_threshold`` (the sample-config key) must reach the run.
+
+    The key used to be documented but ignored: only the environment default
+    ever applied.  A profile that overrides it has to win for its own run.
+    """
+    cfg_path = tmp_path / "nichebench.yml"
+    write_yaml(
+        cfg_path,
+        {
+            "evaluation": {"judge_threshold": 0.9},
+            "profiles": {"strict": {"evaluation": {"judge_threshold": 0.5}}},
+        },
+    )
+    cfg = NicheBenchConfig(config_path=cfg_path)
+
+    assert cfg.get_evaluation_config()["judge_threshold"] == 0.9
+    assert cfg.get_evaluation_config(profile="strict")["judge_threshold"] == 0.5
+
+    # A config that never mentions the key keeps the environment default.
+    absent = NicheBenchConfig(config_path=tmp_path / "absent.yml")
+    assert "judge_threshold" not in absent.get_evaluation_config()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [0.9, 0.5, "0.65", 0],
+)
+def test_resolve_judge_threshold_accepts_configured_values(value):
+    assert resolve_judge_threshold({"judge_threshold": value}) == pytest.approx(float(value))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, True, False, "bogus", "", 1.5, -0.1, float("nan"), float("inf"), [], {}],
+)
+def test_resolve_judge_threshold_rejects_invalid_values(value):
+    """An unusable configured value falls back instead of breaking scoring."""
+    assert resolve_judge_threshold({"judge_threshold": value}) == settings.judge_threshold
+
+
+def test_resolve_judge_threshold_without_a_config_uses_the_setting():
+    assert resolve_judge_threshold(None) == settings.judge_threshold
+    assert resolve_judge_threshold({}) == settings.judge_threshold
 
 
 def test_runtime_defaults_are_present(tmp_path):

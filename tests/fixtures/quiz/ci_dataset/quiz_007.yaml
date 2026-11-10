@@ -1,0 +1,22 @@
+# Sanitized CI fixture for the quiz-v2 data contract.
+#
+# Generated from tests/fixtures/quiz/quiz_v2_fixture.yaml. This is not
+# the private quiz dataset: the text is synthetic and carries no private
+# questions. It exists so the CI data gates have a dataset to run on
+# when the private data submodule is not checked out.
+id: fixture_quiz_007
+dataset_version: quiz-v2
+context: |
+  A block renders a list of recent posts. The list changes only when new
+  content is published, so you want the cached page to be dropped at that
+  moment and not on every request.
+summary: Invalidating a cached block when content changes.
+question: Which mechanism invalidates the cache at the right time?
+choices:
+  - Tag the cache with a content-type tag and invalidate it when nodes change
+  - Disable caching for the block so it is rebuilt on every request
+  - Set a short cache lifetime on the block and rely on timeouts alone
+  - Purge the whole cache on every cron run
+  - Build the block in a service constructor so it is cached once
+  - Store the rendered markup in the site configuration
+correct_choice: A

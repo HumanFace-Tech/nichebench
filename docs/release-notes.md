@@ -1,5 +1,27 @@
 # NicheBench Release Notes
 
+> **Historical release notes.** Current pins are Python 3.13–3.14, LiteLLM
+> `1.106.7`, and OpenCode `2.2.5`; see `pyproject.toml` and `AGENTS.md`.
+
+## 0.3.0 — Leaner Scoring and Runtime V2
+
+> **2026-11-10**
+
+### What's New
+
+- **LLM-judged quiz scoring** — `LiteLLMJudge` reads the candidate answer, selects a letter, and NicheBench compares it with the gold letter. The deterministic parser still runs on the same answer for audit (`selected`, `parse_reason`, `agrees`) but never decides the score. Judge calls retry up to three times; exhausted judge errors are counted separately and excluded from quiz averages.
+- **Quiz v2 dataset** — The private data pack was repaired and rebalanced in place (`nichebench-data-drupal@1225a56`): 12 truncated and 12 mapping-typed choices fixed, gold distribution A=25 and B–F=24, `dataset_version: quiz-v2`.
+- **Direct judge for code and bug fixing** — DeepEval was removed. Scores are recomputed from rubric criteria, clamped, and audited against the judge's own overall score. Judge failures are classified (`judge_unavailable`, `judge_invalid_json`, and related kinds), retried, and excluded from averages.
+- **Structural sanity layer** — Code responses hard-fail only when no code exists or the response is visibly truncated; lint and language checks are advisory.
+- **Legacy `code_agent` removed** — The deprecated LangGraph prototype and its LangChain/LangGraph dependencies are gone. `drupal_runtime` is the only agentic path; legacy task runs fail with a clear message, and historical result files remain readable.
+- **OpenCode V2 cage** — The runtime config targets OpenCode `2.2.5` with native V2 `providers`/`permissions`/`agents`. The `--pure` flag was removed because OpenCode 2.2.5 rejects it. The `nichebench/opencode-ddev:2.2.5` image must be built locally.
+- **Lean dependencies** — Python is now `>=3.13,<3.15`; `litellm==1.106.7`; `pandas`, `pyarrow`, `deepeval`, and the LangChain family removed. Packaging no longer walks the private runtime data tree, so `poetry build` completes in under a minute.
+- **Run integrity** — Judge thresholds honor the effective profile config; configuration and infrastructure failures are reported as `config_errors` and excluded from model averages instead of silently lowering them.
+
+### Known Limits
+
+- Runtime tasks require Docker and DDEV and are not exercised by CI. MiniMax judging was rate-limited (HTTP 429) during release verification; local-judge smokes were used for pipeline validation.
+
 ## 0.2.1 — Runtime Capture Update
 
 > **2026-10-09**

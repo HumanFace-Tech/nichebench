@@ -48,19 +48,26 @@ class NicheBenchConfig:
                 "parallelism": 1,  # Default to sequential execution
                 "trials": 1,
                 "runtime_mode": "cage",
-                "runtime_container_image": "ghcr.io/anomalyco/opencode:1.18.3",
+                "runtime_container_image": "ghcr.io/anomalyco/opencode:2.2.5",
                 "runtime_container_user": "1000:1000",
                 "runtime_container_read_only": False,
                 "runtime_timeout_minutes": 60,
                 "runtime_max_workers": 1,
                 "runtime_drush_mode": "ddev",
                 "runtime_drush_command": ["drush"],
+                # Structural sanity layer for code generation (lean: hard-fail
+                # only on no code / truncation; the rest is advisory).
+                "code_sanity_checks": True,
+                # Documented future switch — the sanity/blend score is not
+                # implemented yet; the flag is read by nothing.
+                "code_sanity_blend": False,
                 "runtime_browser_artifacts_enabled": False,
                 "runtime_artifact_retention": "standard",
                 "runtime_keep_workspaces": False,
                 "runtime_container_enable_ddev": True,
-                "runtime_container_ddev_image": "nichebench/opencode-ddev:1.18.3",
+                "runtime_container_ddev_image": "nichebench/opencode-ddev:2.2.5",
                 "runtime_container_ddev_auto_build": True,
+                "runtime_opencode_provider_package": "aisdk:@ai-sdk/openai-compatible",
                 "runtime_tool_allowlist_enforce": False,
                 "runtime_tool_retry_attempts": 3,
                 "runtime_judge_samples": 1,

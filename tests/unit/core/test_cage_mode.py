@@ -1,5 +1,6 @@
 """Unit tests for cage mode defaults, mode normalization, and metadata (Tasks 1.1-1.3)."""
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -471,7 +472,7 @@ class TestCageStartupContract:
         assert "--model" in command
         model_idx = command.index("--model")
         assert command[model_idx + 1] == "groq/test-model"
-        assert "--pure" in command
+        assert "--pure" not in command
         assert "--dangerously-skip-permissions" in command
         # Verify no duplicated "opencode" positional after image
         image_idx = command.index("ghcr.io/opencode-ai/opencode:v0.14.0")
@@ -683,7 +684,7 @@ class TestCageModeDDEVImageFlow:
         cfg = NicheBenchConfig(config_path=cfg_path)
         eval_conf = cfg.get_evaluation_config()
         assert eval_conf["runtime_container_enable_ddev"] is True
-        assert eval_conf["runtime_container_ddev_image"] == "nichebench/opencode-ddev:1.18.3"
+        assert eval_conf["runtime_container_ddev_image"] == "nichebench/opencode-ddev:2.2.5"
         assert eval_conf["runtime_container_ddev_auto_build"] is True
 
     def test_config_ddev_flow_can_be_disabled(self, tmp_path):
@@ -1162,7 +1163,7 @@ class TestCageModeDDEVImageFlow:
         # Verify all other expected flags are still present
         assert "--entrypoint" in command
         assert "--model" in command
-        assert "--pure" in command
+        assert "--pure" not in command
         assert "--dangerously-skip-permissions" in command
         assert "run" in command
 
@@ -1688,10 +1689,11 @@ class TestCageRuntimeModelConfiguration:
             config = json.load(f)
 
         assert "$schema" in config
+        assert config["$schema"] == "https://opencode.ai/config.json"
         assert config["model"] == "groq/test-model"
-        assert "mode" in config
-        assert "build" in config["mode"]
-        prompt_text = config["mode"]["build"]["prompt"]
+        assert "agents" in config
+        assert "build" in config["agents"]
+        prompt_text = config["agents"]["build"]["system"]
 
         # Verify prompt contains common-tool references (not raw task text)
         assert "Read(filePath:" in prompt_text
@@ -1709,10 +1711,10 @@ class TestCageRuntimeModelConfiguration:
         assert "continue autonomously until done" in prompt_text
         assert "review-ready / production-ready for handoff" in prompt_text
 
-        assert "provider" in config
-        assert "groq" in config["provider"]
-        assert "models" in config["provider"]["groq"]
-        assert "test-model" in config["provider"]["groq"]["models"]
+        assert "providers" in config
+        assert "groq" in config["providers"]
+        assert "models" in config["providers"]["groq"]
+        assert "test-model" in config["providers"]["groq"]["models"]
 
     def test_cage_launch_uses_full_compound_model_in_command(self, tmp_path):
         """Cage launch passes full compound model binding in --model flag (no slash-stripping)."""
@@ -2462,8 +2464,8 @@ class TestCliModelOverride:
 class TestCageOpenCodeJsonGeneration:
     """Tests for _write_cage_opencode_json with config-driven generation."""
 
-    def test_native_provider_backward_compat(self, tmp_path):
-        """Without api_base or runtime_config, generates simple native provider block."""
+    def test_native_provider_generates_v2_provider_block(self, tmp_path):
+        """Without api_base or runtime_config, generates a native V2 provider block."""
         result = TestExecutor._write_cage_opencode_json(
             workspace_host_path=tmp_path,
             opencode_provider="groq",
@@ -2472,13 +2474,16 @@ class TestCageOpenCodeJsonGeneration:
         assert result.exists()
         cfg = json.loads(result.read_text())
         assert cfg["model"] == "groq/gemma2-9b-it"
-        assert cfg["small_model"] == "groq/gemma2-9b-it"
-        provider = cfg["provider"]["groq"]
-        assert provider == {"models": {"gemma2-9b-it": {}}}
+        assert "small_model" not in cfg
+        provider = cfg["providers"]["groq"]
+        assert provider["name"] == "groq"
+        assert provider["models"] == {"gemma2-9b-it": {}}
+        assert "package" not in provider
+        assert "settings" not in provider
         assert "autoshorten" not in cfg
 
-    def test_api_base_generates_npm_block(self, tmp_path):
-        """With api_base, generates @ai-sdk/openai-compatible npm provider block."""
+    def test_api_base_generates_package_block(self, tmp_path):
+        """With api_base, generates a V2 provider block with package + settings."""
         result = TestExecutor._write_cage_opencode_json(
             workspace_host_path=tmp_path,
             opencode_provider="groq",
@@ -2488,17 +2493,57 @@ class TestCageOpenCodeJsonGeneration:
         )
         cfg = json.loads(result.read_text())
         assert cfg["model"] == "groq/llama-3.3-70b"
-        provider_block = cfg["provider"]["groq"]
-        assert provider_block["npm"] == "@ai-sdk/openai-compatible"
-        assert provider_block["options"]["baseURL"] == "http://localhost:8080/v1"
+        provider_block = cfg["providers"]["groq"]
+        assert provider_block["package"] == "aisdk:@ai-sdk/openai-compatible"
+        assert provider_block["settings"]["baseURL"] == "http://localhost:8080/v1"
         assert provider_block["name"] == "groq"
         assert "api_key" not in provider_block
-        assert "fetch" not in provider_block["options"]
+        assert "fetch" not in provider_block["settings"]
         assert cfg["default_agent"] == "build"
-        assert cfg["permission"]["*"] == "deny"
-        assert cfg["permission"]["bash"] == "allow"
-        assert cfg["permission"]["question"] == "deny"
-        assert cfg["permission"]["task"] == "deny"
+
+    def test_written_config_uses_v2_top_level_keys(self, tmp_path):
+        """The cage config is native V2 — no V1 keys survive."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="groq",
+            opencode_model_id="my-model",
+            api_base="http://localhost:8080/v1",
+            runtime_config={},
+        )
+        cfg = json.loads(result.read_text())
+        assert "providers" in cfg
+        assert "permissions" in cfg
+        assert "agents" in cfg
+        for v1_key in ("provider", "permission", "mode", "agent", "small_model"):
+            assert v1_key not in cfg, f"V1 key '{v1_key}' must not be emitted"
+
+    def test_agents_build_uses_system_prompt(self, tmp_path):
+        """The system prompt is published as agents.build.system (V2 agent shape)."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="groq",
+            opencode_model_id="my-model",
+        )
+        cfg = json.loads(result.read_text())
+        build = cfg["agents"]["build"]
+        assert build["mode"] == "primary"
+        assert isinstance(build["system"], str)
+        assert build["system"]
+        assert "prompt" not in build
+
+    def test_provider_env_lists_env_var_names_only(self, tmp_path, monkeypatch):
+        """Provider env declares env var names, never the credential values."""
+        monkeypatch.setenv("GROQ_API_KEY", "super-secret-key")
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="groq",
+            opencode_model_id="my-model",
+            api_base="http://localhost:8080/v1",
+            runtime_config={},
+        )
+        cfg = json.loads(result.read_text())
+        assert cfg["providers"]["groq"]["env"] == ["GROQ_API_KEY"]
+        assert "super-secret-key" not in json.dumps(cfg)
 
     def test_output_limit_defaults_to_half_of_context(self, tmp_path):
         """When context_limit set but no output_limit, output = 50% of context."""
@@ -2510,7 +2555,7 @@ class TestCageOpenCodeJsonGeneration:
             runtime_config={"runtime_opencode_context_limit": 8192},
         )
         cfg = json.loads(result.read_text())
-        limit = cfg["provider"]["groq"]["models"]["my-model"]["limit"]
+        limit = cfg["providers"]["groq"]["models"]["my-model"]["limit"]
         assert limit["context"] == 8192
         assert limit["output"] == 4096
 
@@ -2527,7 +2572,7 @@ class TestCageOpenCodeJsonGeneration:
             },
         )
         cfg = json.loads(result.read_text())
-        limit = cfg["provider"]["openai"]["models"]["my-model"]["limit"]
+        limit = cfg["providers"]["openai"]["models"]["my-model"]["limit"]
         assert limit["context"] == 8192
         assert limit["output"] == 1024
 
@@ -2544,11 +2589,11 @@ class TestCageOpenCodeJsonGeneration:
             },
         )
         cfg = json.loads(result.read_text())
-        limit = cfg["provider"]["openai"]["models"]["my-model"]["limit"]
+        limit = cfg["providers"]["openai"]["models"]["my-model"]["limit"]
         assert limit["output"] == 2500
 
     def test_timeout_and_chunk_timeout(self, tmp_path):
-        """Timeout and chunk timeout appear in provider options."""
+        """Timeout and chunk timeout appear in provider settings."""
         result = TestExecutor._write_cage_opencode_json(
             workspace_host_path=tmp_path,
             opencode_provider="openai",
@@ -2560,33 +2605,57 @@ class TestCageOpenCodeJsonGeneration:
             },
         )
         cfg = json.loads(result.read_text())
-        opts = cfg["provider"]["openai"]["options"]
-        assert opts["timeout"] == 120000
-        assert opts["chunkTimeout"] == 60000
+        settings = cfg["providers"]["openai"]["settings"]
+        assert settings["timeout"] == 120000
+        assert settings["chunkTimeout"] == 60000
 
-    def test_set_cache_key(self, tmp_path):
-        """setCacheKey appears when runtime_opencode_set_cache_key is true."""
+    def test_supports_prompt_cache_key(self, tmp_path):
+        """compatibility.supportsPromptCacheKey appears when the config flag is true."""
         result = TestExecutor._write_cage_opencode_json(
             workspace_host_path=tmp_path,
             opencode_provider="openai",
             opencode_model_id="my-model",
             api_base="http://localhost:8080/v1",
-            runtime_config={"runtime_opencode_set_cache_key": True},
+            runtime_config={"runtime_opencode_supports_prompt_cache_key": True},
         )
         cfg = json.loads(result.read_text())
-        assert cfg["provider"]["openai"]["options"]["setCacheKey"] is True
+        assert cfg["providers"]["openai"]["compatibility"] == {"supportsPromptCacheKey": True}
 
-    def test_custom_npm_package(self, tmp_path):
-        """Custom npm package overrides default @ai-sdk/openai-compatible."""
+    def test_supports_prompt_cache_key_absent_by_default(self, tmp_path):
+        """No compatibility block is emitted when the flag is not configured."""
         result = TestExecutor._write_cage_opencode_json(
             workspace_host_path=tmp_path,
             opencode_provider="openai",
             opencode_model_id="my-model",
             api_base="http://localhost:8080/v1",
-            runtime_config={"runtime_opencode_provider_npm": "@my-org/my-sdk"},
+            runtime_config={},
         )
         cfg = json.loads(result.read_text())
-        assert cfg["provider"]["openai"]["npm"] == "@my-org/my-sdk"
+        assert "compatibility" not in cfg["providers"]["openai"]
+
+    def test_provider_package_defaults_to_openai_compatible(self, tmp_path):
+        """The default V2 package is aisdk:@ai-sdk/openai-compatible."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="openai",
+            opencode_model_id="my-model",
+            api_base="http://localhost:8080/v1",
+            runtime_config={},
+        )
+        cfg = json.loads(result.read_text())
+        assert cfg["providers"]["openai"]["package"] == "aisdk:@ai-sdk/openai-compatible"
+
+    def test_custom_provider_package(self, tmp_path):
+        """Custom package overrides the default aisdk:@ai-sdk/openai-compatible."""
+        result = TestExecutor._write_cage_opencode_json(
+            workspace_host_path=tmp_path,
+            opencode_provider="openai",
+            opencode_model_id="my-model",
+            api_base="http://localhost:8080/v1",
+            runtime_config={"runtime_opencode_provider_package": "aisdk:@my-org/my-sdk"},
+        )
+        cfg = json.loads(result.read_text())
+        assert cfg["providers"]["openai"]["package"] == "aisdk:@my-org/my-sdk"
 
     def test_compaction_emitted(self, tmp_path):
         """compaction block emitted when any compaction config key is set."""
@@ -2604,7 +2673,8 @@ class TestCageOpenCodeJsonGeneration:
         assert "compaction" in cfg
         assert cfg["compaction"]["auto"] is True
         assert cfg["compaction"]["prune"] is True
-        assert cfg["compaction"]["reserved"] == 1000
+        assert cfg["compaction"]["buffer"] == 1000
+        assert "reserved" not in cfg["compaction"]
 
     def test_compaction_absent_when_not_configured(self, tmp_path):
         """compaction block absent when no compaction config is set."""
@@ -2616,30 +2686,39 @@ class TestCageOpenCodeJsonGeneration:
         cfg = json.loads(result.read_text())
         assert "compaction" not in cfg
 
-    def test_permission_block_is_explicit_allowlist(self, tmp_path):
-        """Generated opencode.json uses an explicit allowlist: deny-all then allow specific tools."""
+    def test_permissions_are_ordered_default_deny_first(self, tmp_path):
+        """Generated opencode.json uses an ordered V2 permissions array: deny-all then grants."""
         result = TestExecutor._write_cage_opencode_json(
             workspace_host_path=tmp_path,
             opencode_provider="groq",
             opencode_model_id="my-model",
         )
         cfg = json.loads(result.read_text())
-        perm = cfg["permission"]
+        perms = cfg["permissions"]
+        assert isinstance(perms, list)
+        for rule in perms:
+            assert set(rule) == {"action", "resource", "effect"}
 
-        # Wildcard must be deny (not allow) so unknown tools are blocked by default
-        assert perm["*"] == "deny", f"Expected '*' to be 'deny', got {perm['*']!r}"
+        # Default-deny must come first so unknown tools are blocked.
+        assert perms[0] == {"action": "*", "resource": "*", "effect": "deny"}
 
-        # Core coding tools must be explicitly allowed
-        for tool in ("bash", "read", "edit", "glob", "grep", "write", "list", "patch", "todowrite", "todoread"):
-            assert perm[tool] == "allow", f"Expected '{tool}' to be 'allow', got {perm.get(tool)!r}"
+        effects = {(rule["action"], rule["resource"]): rule["effect"] for rule in perms}
+
+        # Core coding tools must be explicitly allowed.
+        for action in ("read", "edit", "glob", "grep", "shell", "todo"):
+            assert effects[(action, "*")] == "allow", f"Expected '{action}' to be 'allow'"
 
         # Interactive / delegation / network tools must be denied:
         # - question: no interactive prompts
-        # - task: no sub-agent spawning
+        # - subagent: no sub-agent spawning
         # - skill: no loading external skills (cage is isolated)
         # - webfetch/websearch: no internet access (cage is offline sandbox)
-        for tool in ("question", "task", "skill", "webfetch", "websearch"):
-            assert perm[tool] == "deny", f"Expected '{tool}' to be 'deny', got {perm.get(tool)!r}"
+        for action in ("question", "subagent", "skill", "webfetch", "websearch"):
+            assert effects[(action, "*")] == "deny", f"Expected '{action}' to be 'deny'"
+
+        # Legacy V1 action names must not be emitted.
+        for legacy_action in ("bash", "task", "write", "patch", "todowrite", "todoread"):
+            assert legacy_action not in effects, f"V1 action '{legacy_action}' must not be emitted"
 
     def test_external_directory_allowlist_includes_workspace(self, tmp_path):
         """Cage opencode.json must allow the workspace path and standard temp/state dirs.
@@ -2653,11 +2732,16 @@ class TestCageOpenCodeJsonGeneration:
             opencode_model_id="my-model",
         )
         cfg = json.loads(result.read_text())
-        ext_dirs = cfg["permission"]["external_directory"]
-        assert ext_dirs[str(tmp_path)] == "allow", f"Workspace path {tmp_path} must be allowed, got {ext_dirs!r}"
+        ext_rules = [
+            rule
+            for rule in cfg["permissions"]
+            if rule["action"] == "external_directory" and rule["effect"] == "allow"
+        ]
+        resources = {rule["resource"] for rule in ext_rules}
+        assert f"{tmp_path}/*" in resources, f"Workspace path {tmp_path} must be allowed, got {resources!r}"
         # Temp and state dirs the MUT needs for opencode internals
         for path in ("/tmp", "/tmp/opencode", "/nichebench/islands", "/nichebench/state"):
-            assert ext_dirs[path] == "allow", f"{path} must be allowed, got {ext_dirs!r}"
+            assert f"{path}/*" in resources, f"{path} must be allowed, got {resources!r}"
 
     def test_native_provider_with_limits(self, tmp_path):
         """Native provider without api_base can still carry model limits."""
@@ -2671,14 +2755,15 @@ class TestCageOpenCodeJsonGeneration:
             },
         )
         cfg = json.loads(result.read_text())
-        limit = cfg["provider"]["groq"]["models"]["my-model"]["limit"]
+        limit = cfg["providers"]["groq"]["models"]["my-model"]["limit"]
         assert limit["context"] == 4096
         assert limit["output"] == 512
-        # No npm block for native
-        assert "npm" not in cfg["provider"]["groq"]
+        # No package/settings for native providers
+        assert "package" not in cfg["providers"]["groq"]
+        assert "settings" not in cfg["providers"]["groq"]
 
     def test_no_fetch_block_without_timeouts(self, tmp_path):
-        """No fetch block in options when no timeouts are configured."""
+        """No fetch block in settings when no timeouts are configured."""
         result = TestExecutor._write_cage_opencode_json(
             workspace_host_path=tmp_path,
             opencode_provider="openai",
@@ -2687,7 +2772,7 @@ class TestCageOpenCodeJsonGeneration:
             runtime_config={},
         )
         cfg = json.loads(result.read_text())
-        assert "fetch" not in cfg["provider"]["openai"]["options"]
+        assert "fetch" not in cfg["providers"]["openai"]["settings"]
 
     def test_custom_provider_name_used_as_key(self, tmp_path):
         """runtime_opencode_provider_name overrides the provider dict key and model binding."""
@@ -2699,53 +2784,64 @@ class TestCageOpenCodeJsonGeneration:
             runtime_config={"runtime_opencode_provider_name": "my-local"},
         )
         cfg = json.loads(result.read_text())
-        assert "my-local" in cfg["provider"]
+        assert "my-local" in cfg["providers"]
         assert cfg["model"] == "my-local/my-model"
-        assert cfg["provider"]["my-local"]["name"] == "my-local"
+        assert cfg["providers"]["my-local"]["name"] == "my-local"
 
 
 _MODEL_SOURCE_CONFIG = {
-    "provider": {
+    "providers": {
         "minimax": {
-            "npm": "@ai-sdk/anthropic",
-            "options": {"apiKey": "leaked-secret", "baseURL": "https://evil.invalid"},
+            "package": "aisdk:@ai-sdk/anthropic",
+            "settings": {"apiKey": "leaked-secret", "baseURL": "https://evil.invalid"},
             "models": {
                 "MiniMax-M3": {
-                    "id": "MiniMax-M3",
+                    "modelID": "MiniMax-M3",
                     "name": "MiniMax-M3",
                     "family": "minimax",
-                    "release_date": "2026-06-01",
-                    "attachment": True,
-                    "reasoning": True,
-                    "temperature": True,
-                    "tool_call": True,
-                    "reasoning_options": [{"type": "toggle"}],
-                    "open_weights": True,
-                    "canonical_model_id": "minimax/MiniMax-M3",
+                    "releaseDate": "2026-06-01",
+                    "capabilities": {
+                        "input": ["text", "image", "video"],
+                        "output": ["text"],
+                        "tools": True,
+                        "temperature": True,
+                        "reasoning": {"supported": True},
+                    },
+                    "cost": [{"input": 0, "output": 0, "cache": {"read": 0, "write": 0}}],
                     "limit": {"context": 1048576, "output": 512000, "input": 900000},
-                    "modalities": {"input": ["text", "image", "video"], "output": ["text"]},
-                    "cost": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0},
+                    # Model-level fields that must never reach the cage.
+                    "settings": {"apiKey": "model-level-secret"},
+                    "headers": {"X-Secret": "header-secret"},
+                    "body": {"leak": "body-secret"},
+                    "package": "aisdk:@leaky/model-package",
+                    "variants": [{"name": "leaky-variant"}],
                 },
                 "MiniMax-M3.1-Flash-Preview": {
-                    "id": "MiniMax-M3.1-Flash-Preview",
+                    "modelID": "MiniMax-M3.1-Flash-Preview",
                     "name": "MiniMax-M3.1-Flash-Preview",
                     "family": "minimax",
-                    "release_date": "2026-09-27",
-                    "attachment": True,
-                    "reasoning": True,
-                    "temperature": True,
-                    "tool_call": True,
-                    "reasoning_options": [{"type": "effort", "values": ["low", "medium", "high"]}],
+                    "releaseDate": "2026-09-27",
+                    "capabilities": {
+                        "input": ["text", "image", "video"],
+                        "output": ["text"],
+                        "tools": True,
+                        "temperature": True,
+                        "reasoning": {"supported": True},
+                    },
+                    "cost": [{"input": 0, "output": 0, "cache": {"read": 0, "write": 0}}],
                     "limit": {"context": 1000000, "output": 512000},
-                    "modalities": {"input": ["text", "image", "video"], "output": ["text"]},
-                    "cost": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0},
+                    "settings": {"apiKey": "model-level-secret"},
+                    "headers": {"X-Secret": "header-secret"},
+                    "body": {"leak": "body-secret"},
+                    "package": "aisdk:@leaky/model-package",
+                    "variants": [{"name": "leaky-variant"}],
                 },
-                "MiniMax-M2.7": {"id": "MiniMax-M2.7", "limit": {"context": 204800, "output": 32768}},
+                "MiniMax-M2.7": {"modelID": "MiniMax-M2.7", "limit": {"context": 204800, "output": 32768}},
             },
         },
     },
-    "permission": {"*": "allow", "bash": "allow"},
-    "agent": {"build": {"prompt": "leaked interactive prompt"}},
+    "permissions": [{"action": "*", "resource": "*", "effect": "allow"}],
+    "agents": {"build": {"system": "leaked interactive prompt"}},
     "plugin": ["some-plugin"],
     "instructions": ["leaked instructions"],
 }
@@ -2760,8 +2856,8 @@ def _write_model_source(tmp_path, payload):
 class TestCageModelMetadataConfigFile:
     """Tests for runtime_opencode_model_config_file metadata import."""
 
-    def test_metadata_enters_npm_cage(self, tmp_path):
-        """Selected model metadata is merged into the npm-based cage provider block."""
+    def test_metadata_enters_cage(self, tmp_path):
+        """Selected model metadata is merged into the remapped cage provider block."""
         source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
         result = TestExecutor._write_cage_opencode_json(
             workspace_host_path=tmp_path,
@@ -2770,13 +2866,16 @@ class TestCageModelMetadataConfigFile:
             api_base="https://api.minimax.io/v1",
             runtime_config={"runtime_opencode_model_config_file": str(source)},
         )
-        entry = json.loads(result.read_text())["provider"]["minimax"]["models"]["MiniMax-M3"]
-        assert entry["attachment"] is True
-        assert entry["reasoning"] is True
-        assert entry["temperature"] is True
-        assert entry["tool_call"] is True
+        entry = json.loads(result.read_text())["providers"]["minimax"]["models"]["MiniMax-M3"]
+        assert entry["modelID"] == "MiniMax-M3"
+        assert entry["name"] == "MiniMax-M3"
         assert entry["family"] == "minimax"
-        assert entry["modalities"] == {"input": ["text", "image", "video"], "output": ["text"]}
+        assert entry["releaseDate"] == "2026-06-01"
+        assert entry["capabilities"]["tools"] is True
+        assert entry["capabilities"]["temperature"] is True
+        assert entry["capabilities"]["reasoning"] == {"supported": True}
+        assert entry["capabilities"]["input"] == ["text", "image", "video"]
+        assert entry["capabilities"]["output"] == ["text"]
 
     def test_metadata_enters_native_cage(self, tmp_path):
         """Selected model metadata is merged for native (no api_base) providers too."""
@@ -2788,13 +2887,13 @@ class TestCageModelMetadataConfigFile:
             runtime_config={"runtime_opencode_model_config_file": str(source)},
         )
         cfg = json.loads(result.read_text())
-        assert "npm" not in cfg["provider"]["minimax"]
-        entry = cfg["provider"]["minimax"]["models"]["MiniMax-M3"]
-        assert entry["attachment"] is True
-        assert entry["modalities"]["input"] == ["text", "image", "video"]
+        assert "package" not in cfg["providers"]["minimax"]
+        assert "settings" not in cfg["providers"]["minimax"]
+        entry = cfg["providers"]["minimax"]["models"]["MiniMax-M3"]
+        assert entry["capabilities"]["input"] == ["text", "image", "video"]
 
     def test_metadata_uses_effective_provider_key(self, tmp_path):
-        """A custom npm provider name selects the matching provider entry."""
+        """A custom provider name selects the matching provider entry."""
         source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
         result = TestExecutor._write_cage_opencode_json(
             workspace_host_path=tmp_path,
@@ -2808,7 +2907,7 @@ class TestCageModelMetadataConfigFile:
         )
         cfg = json.loads(result.read_text())
         assert cfg["model"] == "minimax/MiniMax-M3"
-        assert cfg["provider"]["minimax"]["models"]["MiniMax-M3"]["attachment"] is True
+        assert cfg["providers"]["minimax"]["models"]["MiniMax-M3"]["modelID"] == "MiniMax-M3"
 
     def test_runtime_limits_win_over_source_limits(self, tmp_path):
         """Runtime context/output caps override the imported limit while other fields survive."""
@@ -2823,11 +2922,11 @@ class TestCageModelMetadataConfigFile:
                 "runtime_opencode_model_limits": {"MiniMax-M3": {"context": 1048576, "output": 32768}},
             },
         )
-        entry = json.loads(result.read_text())["provider"]["minimax"]["models"]["MiniMax-M3"]
+        entry = json.loads(result.read_text())["providers"]["minimax"]["models"]["MiniMax-M3"]
         assert entry["limit"]["context"] == 1048576
         assert entry["limit"]["output"] == 32768
         assert entry["limit"]["input"] == 900000
-        assert entry["attachment"] is True
+        assert entry["family"] == "minimax"
 
     def test_runtime_limits_win_per_model(self, tmp_path):
         """Each model keeps its own runtime cap and its own imported native limit."""
@@ -2851,7 +2950,7 @@ class TestCageModelMetadataConfigFile:
                 api_base="https://api.minimax.io/v1",
                 runtime_config=runtime_config,
             )
-            entry = json.loads(result.read_text())["provider"]["minimax"]["models"][model_id]
+            entry = json.loads(result.read_text())["providers"]["minimax"]["models"][model_id]
             assert entry["limit"]["context"] == context, model_id
             assert entry["limit"]["output"] == output, model_id
             assert entry["limit"]["output"] != 512000, model_id
@@ -2859,6 +2958,7 @@ class TestCageModelMetadataConfigFile:
     def test_subscription_cost_is_transcribed_per_model(self, tmp_path):
         """Token Plan all-zero cost reaches the cage for both models, not invented rates."""
         source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
+        zero_cost = [{"input": 0, "output": 0, "cache": {"read": 0, "write": 0}}]
         for model_id in ("MiniMax-M3", "MiniMax-M3.1-Flash-Preview"):
             result = TestExecutor._write_cage_opencode_json(
                 workspace_host_path=tmp_path,
@@ -2867,9 +2967,8 @@ class TestCageModelMetadataConfigFile:
                 api_base="https://api.minimax.io/v1",
                 runtime_config={"runtime_opencode_model_config_file": str(source)},
             )
-            entry = json.loads(result.read_text())["provider"]["minimax"]["models"][model_id]
-            assert entry["cost"] == {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}, model_id
-            assert "context_over_200k" not in entry["cost"], model_id
+            entry = json.loads(result.read_text())["providers"]["minimax"]["models"][model_id]
+            assert entry["cost"] == zero_cost, model_id
             assert "tiers" not in entry["cost"], model_id
 
     def test_source_limits_survive_without_runtime_limits(self, tmp_path):
@@ -2882,7 +2981,7 @@ class TestCageModelMetadataConfigFile:
             api_base="https://api.minimax.io/v1",
             runtime_config={"runtime_opencode_model_config_file": str(source)},
         )
-        entry = json.loads(result.read_text())["provider"]["minimax"]["models"]["MiniMax-M3"]
+        entry = json.loads(result.read_text())["providers"]["minimax"]["models"]["MiniMax-M3"]
         assert entry["limit"] == {"context": 1048576, "output": 512000, "input": 900000}
 
     def test_only_selected_model_is_imported(self, tmp_path):
@@ -2896,7 +2995,7 @@ class TestCageModelMetadataConfigFile:
                 api_base="https://api.minimax.io/v1",
                 runtime_config={"runtime_opencode_model_config_file": str(source)},
             )
-            models = json.loads(result.read_text())["provider"]["minimax"]["models"]
+            models = json.loads(result.read_text())["providers"]["minimax"]["models"]
             assert list(models) == [model_id]
 
     def test_unsupported_fields_and_config_keys_cannot_leak(self, tmp_path):
@@ -2910,20 +3009,33 @@ class TestCageModelMetadataConfigFile:
             runtime_config={"runtime_opencode_model_config_file": str(source)},
         )
         cfg = json.loads(result.read_text())
-        entry = cfg["provider"]["minimax"]["models"]["MiniMax-M3"]
+        entry = cfg["providers"]["minimax"]["models"]["MiniMax-M3"]
 
-        for field in ("reasoning_options", "open_weights", "canonical_model_id", "last_updated", "description"):
+        for field in ("settings", "headers", "body", "package", "variants"):
             assert field not in entry, f"{field} must not enter the cage config"
 
-        assert cfg["permission"]["*"] == "deny"
+        for field in ("last_updated", "description", "open_weights", "canonical_model_id"):
+            assert field not in entry, f"{field} must not enter the cage config"
+
+        # The cage keeps its own deny-by-default permissions, never the source ones.
+        assert cfg["permissions"][0] == {"action": "*", "resource": "*", "effect": "deny"}
         assert "leaked interactive prompt" not in json.dumps(cfg)
         assert "leaked-secret" not in json.dumps(cfg)
+        assert "model-level-secret" not in json.dumps(cfg)
+        assert "header-secret" not in json.dumps(cfg)
+        assert "body-secret" not in json.dumps(cfg)
+        assert "leaky-variant" not in json.dumps(cfg)
         assert "leaked instructions" not in json.dumps(cfg)
-        assert cfg["provider"]["minimax"]["npm"] == "@ai-sdk/openai-compatible"
-        assert cfg["provider"]["minimax"]["options"] == {"baseURL": "https://api.minimax.io/v1"}
+        assert "some-plugin" not in json.dumps(cfg)
 
-    def test_reasoning_options_dropped_for_both_models(self, tmp_path):
-        """Both models declare reasoning_options upstream; neither may reach the cage."""
+        # Provider-level source fields never reach the cage provider block.
+        assert cfg["providers"]["minimax"]["package"] == "aisdk:@ai-sdk/openai-compatible"
+        assert cfg["providers"]["minimax"]["settings"] == {"baseURL": "https://api.minimax.io/v1"}
+        assert "ai-sdk/anthropic" not in json.dumps(cfg)
+        assert "evil.invalid" not in json.dumps(cfg)
+
+    def test_reasoning_capability_preserved(self, tmp_path):
+        """Both models declare reasoning upstream; the V2 capability shape survives."""
         source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
         for model_id in ("MiniMax-M3", "MiniMax-M3.1-Flash-Preview"):
             result = TestExecutor._write_cage_opencode_json(
@@ -2933,10 +3045,9 @@ class TestCageModelMetadataConfigFile:
                 api_base="https://api.minimax.io/v1",
                 runtime_config={"runtime_opencode_model_config_file": str(source)},
             )
-            entry = json.loads(result.read_text())["provider"]["minimax"]["models"][model_id]
-            assert "reasoning_options" in _MODEL_SOURCE_CONFIG["provider"]["minimax"]["models"][model_id]
+            entry = json.loads(result.read_text())["providers"]["minimax"]["models"][model_id]
             assert "reasoning_options" not in entry, model_id
-            assert entry["reasoning"] is True, model_id
+            assert entry["capabilities"]["reasoning"] == {"supported": True}, model_id
 
     def test_missing_config_file_raises(self, tmp_path):
         """A configured but absent source file raises a meaningful ValueError."""
@@ -2976,6 +3087,18 @@ class TestCageModelMetadataConfigFile:
                 runtime_config={"runtime_opencode_model_config_file": str(source)},
             )
 
+    def test_missing_providers_object_raises(self, tmp_path):
+        """A source file without the V2 'providers' object raises a meaningful ValueError."""
+        source = _write_model_source(tmp_path, {"provider": {"minimax": {"models": {}}}})
+        with pytest.raises(ValueError, match="has no 'providers' object"):
+            TestExecutor._write_cage_opencode_json(
+                workspace_host_path=tmp_path,
+                opencode_provider="minimax",
+                opencode_model_id="MiniMax-M3",
+                api_base="https://api.minimax.io/v1",
+                runtime_config={"runtime_opencode_model_config_file": str(source)},
+            )
+
     def test_missing_provider_entry_raises(self, tmp_path):
         """A provider key absent from the source file raises a meaningful ValueError."""
         source = _write_model_source(tmp_path, _MODEL_SOURCE_CONFIG)
@@ -3005,7 +3128,7 @@ class TestCageModelMetadataConfigFile:
 
     def test_malformed_models_structure_raises(self, tmp_path):
         """A provider entry without a models object raises a meaningful ValueError."""
-        source = _write_model_source(tmp_path, {"provider": {"minimax": {"npm": "@ai-sdk/anthropic"}}})
+        source = _write_model_source(tmp_path, {"providers": {"minimax": {"package": "aisdk:@ai-sdk/anthropic"}}})
         with pytest.raises(ValueError, match="has no 'models' object"):
             TestExecutor._write_cage_opencode_json(
                 workspace_host_path=tmp_path,
@@ -3026,8 +3149,8 @@ class TestCageModelMetadataConfigFile:
             api_base="https://api.minimax.io/v1",
             runtime_config={"runtime_opencode_model_config_file": "model-source.jsonc"},
         )
-        entry = json.loads(result.read_text())["provider"]["minimax"]["models"]["MiniMax-M3"]
-        assert entry["attachment"] is True
+        entry = json.loads(result.read_text())["providers"]["minimax"]["models"]["MiniMax-M3"]
+        assert entry["modelID"] == "MiniMax-M3"
 
     def test_source_file_is_not_copied_into_workspace(self, tmp_path):
         """The configured source lives outside the task workspace and is not mounted."""
@@ -3055,7 +3178,7 @@ class TestCageModelMetadataConfigFile:
             runtime_config={},
         )
         cfg = json.loads(result.read_text())
-        assert cfg["provider"]["minimax"]["models"]["MiniMax-M3"] == {}
+        assert cfg["providers"]["minimax"]["models"]["MiniMax-M3"] == {}
 
     def test_project_opencode_jsonc_declares_backported_models(self):
         """The project root opencode.jsonc stays pure JSON and declares the backported models."""
@@ -3063,41 +3186,45 @@ class TestCageModelMetadataConfigFile:
         source = repo_root / "opencode.jsonc"
         payload = json.loads(source.read_text(encoding="utf-8"))
         assert payload["$schema"] == "https://opencode.ai/config.json"
-        models = payload["provider"]["minimax"]["models"]
+        models = payload["providers"]["minimax"]["models"]
         assert set(models) == {"MiniMax-M3", "MiniMax-M3.1-Flash-Preview"}
-        assert "options" not in payload["provider"]["minimax"]
-        assert set(payload) == {"$schema", "provider"}
+        assert "settings" not in payload["providers"]["minimax"]
+        assert set(payload) == {"$schema", "providers"}
 
     def test_project_opencode_jsonc_declares_token_plan_records(self):
         """Both models carry Token Plan limits and all-zero subscription cost."""
         repo_root = Path(__file__).resolve().parents[3]
-        models = json.loads((repo_root / "opencode.jsonc").read_text(encoding="utf-8"))["provider"]["minimax"]["models"]
+        payload = json.loads((repo_root / "opencode.jsonc").read_text(encoding="utf-8"))
+        models = payload["providers"]["minimax"]["models"]
         expected_limits = {
             "MiniMax-M3": {"context": 1048576, "output": 512000},
             "MiniMax-M3.1-Flash-Preview": {"context": 1000000, "output": 512000},
         }
         expected_release = {"MiniMax-M3": "2026-06-01", "MiniMax-M3.1-Flash-Preview": "2026-09-27"}
-        zero_cost = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+        zero_cost = [{"input": 0, "output": 0, "cache": {"read": 0, "write": 0}}]
         for model_id, limit in expected_limits.items():
             entry = models[model_id]
-            assert entry["id"] == model_id, model_id
+            assert entry["modelID"] == model_id, model_id
             assert entry["name"] == model_id, model_id
             assert entry["family"] == "minimax", model_id
-            assert entry["release_date"] == expected_release[model_id], model_id
+            assert entry["releaseDate"] == expected_release[model_id], model_id
             assert entry["limit"] == limit, model_id
             assert entry["cost"] == zero_cost, model_id
-            assert entry["modalities"] == {"input": ["text", "image", "video"], "output": ["text"]}, model_id
-            for flag in ("attachment", "reasoning", "temperature", "tool_call"):
-                assert entry[flag] is True, f"{model_id}.{flag}"
+            capabilities = entry["capabilities"]
+            assert capabilities["input"] == ["text", "image", "video"], model_id
+            assert capabilities["output"] == ["text"], model_id
+            assert capabilities["tools"] is True, model_id
+            assert capabilities["temperature"] is True, model_id
+            assert capabilities["reasoning"] == {"supported": True}, model_id
             assert "reasoning_options" not in entry, model_id
             assert "interleaved" not in entry, model_id
             assert "tiers" not in entry["cost"], model_id
-            assert "context_over_200k" not in entry["cost"], model_id
 
     def test_project_opencode_jsonc_fields_are_supported_only(self):
         """Every declared field is one the pinned cage runtime understands."""
         repo_root = Path(__file__).resolve().parents[3]
-        models = json.loads((repo_root / "opencode.jsonc").read_text(encoding="utf-8"))["provider"]["minimax"]["models"]
+        payload = json.loads((repo_root / "opencode.jsonc").read_text(encoding="utf-8"))
+        models = payload["providers"]["minimax"]["models"]
         for model_id, entry in models.items():
             unsupported = set(entry) - set(runtime_opencode_config.SUPPORTED_MODEL_METADATA_FIELDS)
             assert not unsupported, f"{model_id} declares unsupported fields: {sorted(unsupported)}"
@@ -3105,25 +3232,30 @@ class TestCageModelMetadataConfigFile:
     def test_project_opencode_jsonc_matches_provenance_snapshot(self):
         """Root declarations match the recorded upstream Token Plan snapshot exactly."""
         repo_root = Path(__file__).resolve().parents[3]
-        models = json.loads((repo_root / "opencode.jsonc").read_text(encoding="utf-8"))["provider"]["minimax"]["models"]
+        payload = json.loads((repo_root / "opencode.jsonc").read_text(encoding="utf-8"))
+        models = payload["providers"]["minimax"]["models"]
         snapshot = json.loads(
             (repo_root / "docs" / "runtime" / "minimax-model-metadata.source.json").read_text(encoding="utf-8")
         )
         provenance = snapshot["_provenance"]
         assert provenance["source_provider"] == "minimax-coding-plan"
-        assert provenance["snapshot_sha256"] == ("e43a7e794e4f76455431c6988875a6a1a330b42ece3b8293201e6c94f20ac32f")
-        assert provenance["upstream_opencode_pin"] == "v1.18.3 = 127bdb30784d508cc556c71a0f32b508a3061517"
+        assert "v2.2.5" in provenance["upstream_opencode_pin"]
 
-        for model_id, entry in models.items():
+        model_ids = ("MiniMax-M3", "MiniMax-M3.1-Flash-Preview")
+        records = {model_id: snapshot[model_id] for model_id in model_ids}
+        canonical = json.dumps(records, sort_keys=True, separators=(",", ":"))
+        assert provenance["snapshot_sha256"] == hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+        for model_id in model_ids:
+            entry = models[model_id]
             raw = snapshot[model_id]
             assert entry["limit"] == raw["limit"], model_id
             assert entry["cost"] == raw["cost"], model_id
-            assert entry["modalities"] == raw["modalities"], model_id
-            assert entry["release_date"] == raw["release_date"], model_id
-            for flag in ("attachment", "reasoning", "temperature", "tool_call"):
-                assert entry[flag] == raw[flag], f"{model_id}.{flag}"
-            assert "reasoning_options" not in entry and "reasoning_options" in raw, model_id
-            assert "interleaved" not in entry and "interleaved" not in raw, model_id
+            assert entry["capabilities"] == raw["capabilities"], model_id
+            assert entry["releaseDate"] == raw["releaseDate"], model_id
+            assert entry["modelID"] == raw["modelID"], model_id
+            assert entry["name"] == raw["name"], model_id
+            assert entry["family"] == raw["family"], model_id
 
 
 # ---------------------------------------------------------------------------
@@ -3167,7 +3299,7 @@ class TestCageProviderKeyDerivation:
         # opencode.json written to workspace also uses the derived key
         opencode_cfg = json.loads((tmp_path / "opencode.json").read_text())
         assert opencode_cfg["model"] == "my-local/test-model"
-        assert "my-local" in opencode_cfg["provider"]
+        assert "my-local" in opencode_cfg["providers"]
 
     def test_derived_key_sanitizes_provider_name(self, tmp_path):
         """When no explicit name, provider key is sanitized from original provider."""

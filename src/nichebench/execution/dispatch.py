@@ -9,6 +9,9 @@ This module does NOT own:
     - Summary aggregation (see summary.py)
     - Result persistence (see persistence.py)
     - Runtime execution (see RuntimeExecutionMixin.execute_runtime_test)
+
+The removed ``code_agent`` category is rejected here before any runner is
+invoked, so a legacy task can never execute as another type.
 """
 
 from typing import TYPE_CHECKING, Any, Callable, Optional
@@ -19,6 +22,27 @@ from nichebench.execution.result import TestResult
 if TYPE_CHECKING:
     from nichebench.execution.runners.judge import JudgeRunner
     from nichebench.execution.runners.mut import MUTRunner
+
+# The ``code_agent`` prototype has been removed.  Its tasks must fail loudly
+# here, before any runner is invoked, instead of falling through to another
+# category's execution path.
+REMOVED_CATEGORIES = frozenset({"code_agent"})
+REMOVED_CATEGORY_MESSAGE = (
+    "Category 'code_agent' has been removed; use the 'runtime' (drupal_runtime) category instead."
+)
+
+
+def ensure_supported_category(category: str) -> None:
+    """Reject a removed task category before it reaches any runner.
+
+    Args:
+        category: Task category about to be executed.
+
+    Raises:
+        ValueError: if ``category`` was removed from the harness.
+    """
+    if category in REMOVED_CATEGORIES:
+        raise ValueError(REMOVED_CATEGORY_MESSAGE)
 
 
 def execute_test(
@@ -41,9 +65,14 @@ def execute_test(
     Otherwise runs the MUT then the judge sequentially and returns a
     TestResult with populated mut_output and judge_output.
 
+    Every category — ``quiz`` included — is scored by the configured judge,
+    so the result carries the real ``judge_model`` and
+    ``judge_method="llm"``.
+
     Args:
         test_case: Test case specification.
-        category: Task category ("quiz", "code_generation", "bug_fixing", "runtime").
+        category: Task category ("quiz", "code_generation", "bug_fixing",
+            "runtime").  The removed "code_agent" category raises.
         framework: Framework name.
         mut_model_str: MUT model string.
         judge_model_str: Judge model string.
@@ -57,7 +86,12 @@ def execute_test(
 
     Returns:
         TestResult with populated mut_output and judge_output.
+
+    Raises:
+        ValueError: if ``category`` is the removed ``code_agent`` category.
     """
+    ensure_supported_category(category)
+
     if category == "runtime":
         if runner:
             runner.update_test_status(
@@ -93,10 +127,27 @@ def execute_test(
         result.judge_output = judge_output
         result.passed = passed
 
+        # Propagate judge error/attempt metadata when the judge reported it.
+        if isinstance(judge_output, dict):
+            error_kind = judge_output.get("error_kind")
+            if isinstance(error_kind, str):
+                result.error_kind = error_kind
+            attempts = judge_output.get("attempts")
+            if isinstance(attempts, int) and not isinstance(attempts, bool):
+                result.judge_attempts = attempts
+            # Structural sanity findings (C4) ride along on the judge output
+            # so reports can render the ok/advisory/hard indicator.
+            sanity_findings = judge_output.get("sanity_findings")
+            if isinstance(sanity_findings, list):
+                result.sanity_findings = list(sanity_findings)
+
     except Exception as e:
         result.error = str(e)
         result.mut_output = f"[Error: {str(e)}]"
-        result.judge_output = {"error": str(e)}
+        # An exception that escapes the runners is a harness/config problem,
+        # not a model failure — mark it so reports never treat it as a score.
+        result.judge_output = {"error": str(e), "error_kind": "config_error"}
+        result.error_kind = "config_error"
         result.passed = False
 
     return result

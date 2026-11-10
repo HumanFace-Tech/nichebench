@@ -1,0 +1,21 @@
+# Sanitized CI fixture for the quiz-v2 data contract.
+#
+# Generated from tests/fixtures/quiz/quiz_v2_fixture.yaml. This is not
+# the private quiz dataset: the text is synthetic and carries no private
+# questions. It exists so the CI data gates have a dataset to run on
+# when the private data submodule is not checked out.
+id: fixture_quiz_002
+dataset_version: quiz-v2
+context: |
+  A module ships a service whose constructor needs a configuration value and
+  a logger. You want the container to build it for you.
+summary: Defining a service with constructor arguments.
+question: How should the service arguments be supplied?
+choices:
+  - Declare them in the services.yml file so the container injects them
+  - Build the object manually inside every form class that needs it
+  - Read them from a static helper that the class calls in the constructor
+  - Pass them through a global service locator set up in the module file
+  - Ask the config factory for the values on every property access
+  - Create the object in a hook_boot and store it in a static property
+correct_choice: B

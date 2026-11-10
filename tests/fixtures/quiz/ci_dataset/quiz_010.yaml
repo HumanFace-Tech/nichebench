@@ -1,0 +1,21 @@
+# Sanitized CI fixture for the quiz-v2 data contract.
+#
+# Generated from tests/fixtures/quiz/quiz_v2_fixture.yaml. This is not
+# the private quiz dataset: the text is synthetic and carries no private
+# questions. It exists so the CI data gates have a dataset to run on
+# when the private data submodule is not checked out.
+id: fixture_quiz_010
+dataset_version: quiz-v2
+context: |
+  A class should receive a configuration factory. Other classes in the same
+  module need the same instance, so each class must not create its own.
+summary: Sharing a dependency between classes.
+question: How should the dependency be shared?
+choices:
+  - Inject the service through the constructor and let the container manage it
+  - Instantiate the factory in a static property on the class
+  - Read the configuration from a file in the module directory
+  - Use a global helper function that returns a new factory each call
+  - Ask the entity type manager for the configuration
+  - Use a service locator stored in a static registry
+correct_choice: D

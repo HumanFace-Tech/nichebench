@@ -174,7 +174,7 @@ class TestCaptureDisabledUnchanged:
         recorded = (workspace.run_artifacts_path / "run.log").read_text(encoding="utf-8")
         assert "--format" not in recorded
         assert "--thinking" not in recorded
-        assert "--pure" in recorded
+        assert "--pure" not in recorded
         assert "--dangerously-skip-permissions" in recorded
         assert "--add-host" not in recorded
 
@@ -228,7 +228,7 @@ class TestCaptureCommandShape:
         recorded = (workspace.run_artifacts_path / "run.log").read_text(encoding="utf-8")
         assert "--format\njson" in recorded
         assert "--thinking" in recorded
-        assert "--pure" in recorded
+        assert "--pure" not in recorded
         assert "--dangerously-skip-permissions" in recorded
         assert "--model\nminimax/MiniMax-M3" in recorded
 
@@ -284,11 +284,11 @@ class TestCaptureCommandShape:
             )
 
         generated = json.loads((workspace.path / "opencode.json").read_text(encoding="utf-8"))
-        base_url = generated["provider"][proxy.provider_key]["options"]["baseURL"]
+        base_url = generated["providers"][proxy.provider_key]["settings"]["baseURL"]
         assert base_url.startswith("http://127.0.0.1:")
-        # Provider key, npm package and model binding are unchanged by capture.
-        assert generated["provider"][proxy.provider_key]["npm"] == "@ai-sdk/openai-compatible"
-        assert list(generated["provider"][proxy.provider_key]["models"]) == ["MiniMax-M3"]
+        # Provider key, package and model binding are unchanged by capture.
+        assert generated["providers"][proxy.provider_key]["package"] == "aisdk:@ai-sdk/openai-compatible"
+        assert list(generated["providers"][proxy.provider_key]["models"]) == ["MiniMax-M3"]
 
     def test_effective_config_capture_removes_credentials(self, tmp_path):
         # Seed a config that carries a credential, then capture it.
@@ -296,7 +296,7 @@ class TestCaptureCommandShape:
         attempt = capture.open_attempt("initial")
         seeded = tmp_path / "opencode.json"
         seeded.write_text(
-            json.dumps({"provider": {"minimax": {"options": {"apiKey": "sk-secret-value"}}}}),
+            json.dumps({"providers": {"minimax": {"settings": {"apiKey": "sk-secret-value"}}}}),
             encoding="utf-8",
         )
         manifest = capture.capture_effective_config(attempt, seeded)

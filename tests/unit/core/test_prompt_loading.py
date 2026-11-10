@@ -4,10 +4,6 @@ from nichebench.core.prompt_loader import load_prompt_text
 from nichebench.execution.orchestrator import TestExecutor
 from nichebench.execution.runtime.opencode_config import PROMPTS_PATH
 from nichebench.frameworks.drupal.prompts.BUG_FIXING import BUG_FIXING_SYSTEM_PROMPT
-from nichebench.frameworks.drupal.prompts.CODE_AGENT import (
-    CODE_AGENT_PLANNER_REQUEST_TEMPLATE,
-    CODE_AGENT_SOLVER_REQUEST_TEMPLATE,
-)
 from nichebench.frameworks.drupal.prompts.CODE_GENERATION import (
     CODE_GENERATION_SYSTEM_PROMPT,
 )
@@ -26,13 +22,6 @@ def test_framework_prompt_constants_loaded_from_yaml() -> None:
     assert CODE_GENERATION_SYSTEM_PROMPT.startswith("You are a Drupal developer implementing a feature")
     assert JUDGE_CODE_GENERATION_SYSTEM_PROMPT.startswith("You are an expert Drupal code reviewer")
     assert JUDGE_RUNTIME_SYSTEM_PROMPT.startswith("You are a senior Drupal 11 engineer")
-
-
-def test_code_agent_request_templates_keep_placeholders() -> None:
-    assert "{original_task}" in CODE_AGENT_PLANNER_REQUEST_TEMPLATE
-    assert "{context_block}" in CODE_AGENT_PLANNER_REQUEST_TEMPLATE
-    assert "{step_number}" in CODE_AGENT_SOLVER_REQUEST_TEMPLATE
-    assert "{current_step}" in CODE_AGENT_SOLVER_REQUEST_TEMPLATE
 
 
 def test_write_cage_opencode_json_uses_yaml_prompt(tmp_path: Path) -> None:

@@ -15,6 +15,7 @@ class TestCaseSpec:
     choices: Optional[List[str]] = None
     correct_choice: Optional[str] = None
     checklist: Optional[List[str]] = None
+    dataset_version: Optional[str] = None
     # Runtime task fields
     source: Optional[Dict[str, Any]] = None
     environment: Optional[Dict[str, Any]] = None

@@ -18,6 +18,7 @@ from rich.console import Console
 
 from nichebench.cli.rich_views.reports.completion import render_run_completion_report
 from nichebench.cli.rich_views.reports.detail_code import _render_code_details_table
+from nichebench.cli.rich_views.reports.detail_quiz import _render_quiz_details_table
 from nichebench.cli.rich_views.reports.detail_runtime import (
     _render_runtime_details_table,
 )
@@ -144,15 +145,45 @@ class TestRenderCodeDetailsTableSafeScoring:
         assert "20%" in output
 
     def test_numeric_string_passing_score_excluded(self):
-        """A numeric-string score above 66% must NOT be flagged as a failure.
+        """A row the run marked as passed must NOT be flagged as a failure.
 
-        (The detail table only renders failures.)
+        (The detail table only renders failures, and ``pass`` is the verdict.)
         """
         console, buf = _capture_console()
-        rows = [_code_row({"overall_score": "0.95"})]
+        rows = [_code_row({"overall_score": "0.95"}, passed=True)]
         _render_code_details_table(console, "header", rows, "code_generation")
         # Table body should be empty for a passing row — no percentage text.
         assert "95%" not in buf.getvalue()
+
+    def test_failed_row_above_the_old_display_band_is_shown(self):
+        """Regression: a failed verdict used to vanish when its score > 0.66.
+
+        The filter was score-based, so a result below a raised threshold (or
+        the narrow 0.66-0.7 window) never reached the failure table.
+        """
+        console, buf = _capture_console()
+        rows = [
+            _code_row({"overall_score": 0.68, "criteria": [], "summary": "just short"}, test_id="near_miss"),
+            _code_row({"overall_score": 0.95, "criteria": [], "summary": "raised bar"}, test_id="raised_bar"),
+        ]
+
+        _render_code_details_table(console, "header", rows, "code_generation")
+
+        output = buf.getvalue()
+        assert "near_miss" in output
+        assert "raised_bar" in output
+        assert "68%" in output
+        assert "95%" in output
+
+    def test_a_passing_high_score_row_is_still_excluded(self):
+        console, buf = _capture_console()
+        rows = [
+            _code_row({"overall_score": 0.95, "criteria": [], "summary": "fine"}, test_id="passing_row", passed=True)
+        ]
+
+        _render_code_details_table(console, "header", rows, "code_generation")
+
+        assert "passing_row" not in buf.getvalue()
 
     def test_malformed_string_score_falls_back_to_fail(self):
         """A malformed score must be coerced to 0.0 → rendered as a failure."""
@@ -191,6 +222,101 @@ class TestRenderCodeDetailsTableSafeScoring:
             _code_row({}, test_id="missing"),
         ]
         _render_code_details_table(console, "header", rows, "code_generation")
+
+
+class TestRenderCodeDetailsJudgeErrors:
+    """Judge infrastructure failures render as an error line, not a score."""
+
+    def _error_row(self) -> dict:
+        return _code_row(
+            {
+                "error_kind": "judge_unavailable",
+                "error": "[Error: provider down]",
+                "attempts": 3,
+                "judge_score": None,
+                "final_score": None,
+            },
+            test_id="t_err",
+        )
+
+    def test_judge_error_renders_error_and_attempts_not_a_score(self):
+        console, buf = _capture_console()
+        rows = [self._error_row()]
+        _render_code_details_table(console, "header", rows, "code_generation")
+
+        output = buf.getvalue()
+        assert "t_err" in output
+        assert "judge error" in output
+        assert "judge_unavailable" in output
+        assert "attempts: 3" in output
+        # No fabricated percentage is rendered for a judge failure.
+        assert "0%" not in output
+        assert "100%" not in output
+
+    def test_attempts_shown_when_more_than_one(self):
+        console, buf = _capture_console()
+        rows = [
+            _code_row(
+                {"overall_score": 0.2, "criteria": [], "summary": "needs work", "attempts": 2},
+                test_id="t_retry",
+            )
+        ]
+        _render_code_details_table(console, "header", rows, "code_generation")
+
+        output = buf.getvalue()
+        assert "t_retry" in output
+        assert "20%" in output
+        assert "attempts: 2" in output
+
+    def test_attempts_hidden_for_a_single_attempt_verdict(self):
+        console, buf = _capture_console()
+        rows = [
+            _code_row(
+                {"overall_score": 0.2, "criteria": [], "summary": "needs work", "attempts": 1},
+                test_id="t_once",
+            )
+        ]
+        _render_code_details_table(console, "header", rows, "code_generation")
+
+        output = buf.getvalue()
+        assert "t_once" in output
+        assert "attempts:" not in output
+
+    def test_row_level_error_kind_renders_error_not_percentage(self):
+        """``error_kind`` carried at the row level (as ``to_dict()`` writes it)
+        renders the error kind and attempts — never a percentage — even when
+        ``overall_score`` is missing entirely."""
+        console, buf = _capture_console()
+        row = _code_row({}, test_id="t_row_err")
+        row["error_kind"] = "judge_unavailable"
+        row["judge_attempts"] = 3
+        _render_code_details_table(console, "header", [row], "code_generation")
+
+        output = buf.getvalue()
+        assert "t_row_err" in output
+        assert "judge error" in output
+        assert "judge_unavailable" in output
+        assert "attempts: 3" in output
+        assert "0%" not in output
+        assert "100%" not in output
+
+
+class TestRenderCodeDetailsConfigError:
+    """A harness/config failure renders as its own label, not as a judge error."""
+
+    def test_config_error_row_is_labelled_separately(self):
+        console, buf = _capture_console()
+        rows = [_code_row({"error": "[Error: harness blew up]", "error_kind": "config_error"}, test_id="t_cfg")]
+        _render_code_details_table(console, "header", rows, "code_generation")
+
+        output = buf.getvalue()
+        assert "t_cfg" in output
+        assert "config error (config_error)" in output
+        assert "judge error" not in output
+        # No fabricated percentage, and no judge attempt count either.
+        assert "0%" not in output
+        assert "100%" not in output
+        assert "attempts:" not in output
 
 
 # ─── Tests for the failure-counting branch of render_run_completion_report ────
@@ -317,6 +443,79 @@ class TestRenderRunCompletionReportSafeScoring:
             encoding="utf-8",
         )
         render_run_completion_report(summary_path)
+
+
+class TestCodeFailureCountingFollowsTheRunVerdict:
+    """The failure count and the detail table share one verdict-based filter."""
+
+    @staticmethod
+    def _write_run(tmp_path: Path, rows: list[dict], **summary_overrides) -> tuple[Path, Path]:
+        summary = {
+            "framework": "test",
+            "category": "code_generation",
+            "model": "test/mut",
+            "judge": "test/judge",
+            "total": len(rows),
+            "passed": 0,
+            "partial": 0,
+            "failed": len(rows),
+            "avg_score": 0.5,
+        }
+        summary.update(summary_overrides)
+        summary_path = tmp_path / "summary.json"
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+        details_path = tmp_path / "details.jsonl"
+        with details_path.open("w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+        return summary_path, details_path
+
+    def test_a_failed_row_above_066_renders_the_failure_table(
+        self, tmp_path: Path, capsys, monkeypatch
+    ):
+        """Regression: the count used ``score <= 0.66``, so a 0.68 failure
+        silently skipped the whole detail table."""
+        monkeypatch.setenv("COLUMNS", "200")
+        rows = [_code_row({"overall_score": 0.68, "criteria": [], "summary": "near miss"}, test_id="near_miss")]
+        summary_path, details_path = self._write_run(tmp_path, rows)
+
+        render_run_completion_report(summary_path, details_path)
+
+        output = capsys.readouterr().out
+        assert "near_miss" in output
+        assert "Failed Tests: 1" in output
+        assert "68%" in output
+
+    def test_the_recorded_threshold_decides_for_rows_without_a_pass_flag(
+        self, tmp_path: Path, capsys, monkeypatch
+    ):
+        """A result file that predates the ``pass`` flag is judged against the
+        threshold the run recorded in ``summary.json`` — its effective
+        ``evaluation.judge_threshold`` — not a hardcoded band."""
+        monkeypatch.setenv("COLUMNS", "200")
+        row = {
+            "test_id": "borderline",
+            "framework": "test",
+            "category": "code_generation",
+            "mut_model": "test/mut",
+            "judge_model": "test/judge",
+            "summary": "a test",
+            "judge_output": {"overall_score": 0.95, "criteria": [], "summary": "borderline"},
+        }
+
+        # Bar raised above the score → the row failed and is reported.
+        summary_path, details_path = self._write_run(
+            tmp_path, [row], config={"evaluation": {"judge_threshold": 1.0}}
+        )
+        render_run_completion_report(summary_path, details_path)
+        assert "borderline" in capsys.readouterr().out
+
+        # Same row, threshold at the score → the row passed and is hidden.
+        summary_path, details_path = self._write_run(
+            tmp_path, [row], config={"evaluation": {"judge_threshold": 0.95}}
+        )
+        render_run_completion_report(summary_path, details_path)
+        assert "borderline" not in capsys.readouterr().out
 
 
 class TestRenderRunCompletionSummaryNormalization:
@@ -481,6 +680,123 @@ class TestRenderRunCompletionSummaryNormalization:
             encoding="utf-8",
         )
         render_run_completion_report(summary_path, details_path)
+
+
+class TestCodeSummaryJudgeErrors:
+    """Code/bug run summaries surface judge errors, attempted totals, and an
+    honest ``n/a`` when nothing could be scored."""
+
+    @staticmethod
+    def _write_code_summary(tmp_path: Path, **overrides) -> Path:
+        """Write a code-run summary.json: one scored row, one judge error."""
+        summary = {
+            "framework": "test",
+            "category": "code_generation",
+            "model": "test/mut",
+            "judge": "test/judge",
+            "judge_method": "llm",
+            "total": 1,
+            "attempted_total": 2,
+            "judge_errors": 1,
+            "passed": 1,
+            "partial": 0,
+            "failed": 0,
+            "avg_score": 0.8,
+        }
+        summary.update(overrides)
+        summary_path = tmp_path / "summary.json"
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+        return summary_path
+
+    def test_judge_error_count_is_visible(self, tmp_path: Path, capsys, monkeypatch):
+        """A run with judge_errors > 0 renders without KeyError and labels the errors."""
+        monkeypatch.setenv("COLUMNS", "200")
+        summary_path = self._write_code_summary(tmp_path)
+
+        render_run_completion_report(summary_path)
+
+        output = capsys.readouterr().out
+        assert "Judge Errors" in output
+        assert "Attempted Total" in output
+        # The attempted count (2) and the valid-result average are rendered.
+        assert " 2 " in output
+        assert "80%" in output
+
+    def test_null_avg_score_renders_n_a_without_crash(self, tmp_path: Path, capsys, monkeypatch):
+        """``avg_score: null`` (every row was a judge error) shows ``n/a``."""
+        monkeypatch.setenv("COLUMNS", "200")
+        summary_path = self._write_code_summary(
+            tmp_path,
+            total=0,
+            passed=0,
+            failed=0,
+            judge_errors=2,
+            avg_score=None,
+        )
+
+        render_run_completion_report(summary_path)
+
+        output = capsys.readouterr().out
+        assert "n/a" in output
+        # No fabricated percentage is rendered for an unscorable run.
+        assert "0%" not in output
+
+    def test_report_table_renders_judge_errors_without_keyerror(self, capsys, monkeypatch):
+        """``render_report_table`` renders a judge-error code summary and
+        labels the ``judge_errors`` column."""
+        from nichebench.cli.rich_views.tables import render_report_table
+
+        monkeypatch.setenv("COLUMNS", "200")
+        summary = {
+            "framework": "test",
+            "category": "code_generation",
+            "model": "test/mut",
+            "judge": "test/judge",
+            "judge_method": "llm",
+            "total": 1,
+            "attempted_total": 2,
+            "judge_errors": 1,
+            "passed": 1,
+            "partial": 0,
+            "failed": 0,
+            "avg_score": 0.8,
+        }
+
+        render_report_table(summary, title="Results Summary")
+
+        output = capsys.readouterr().out
+        assert "judge_errors" in output
+        assert "attempted_total" in output
+
+    def test_config_error_count_is_labelled_separately(self, tmp_path: Path, capsys, monkeypatch):
+        """``config_errors`` gets its own column — it is not a judge error."""
+        monkeypatch.setenv("COLUMNS", "200")
+        summary_path = self._write_code_summary(
+            tmp_path, judge_errors=0, config_errors=1, attempted_total=2, total=1
+        )
+
+        render_run_completion_report(summary_path)
+
+        output = capsys.readouterr().out
+        assert "Config Errors" in output
+        assert "Judge Errors" in output
+        assert " 1 " in output
+
+    def test_a_summary_without_config_errors_keeps_its_columns(self, tmp_path: Path, capsys, monkeypatch):
+        """Old and clean summaries (no ``config_errors`` key) render unchanged."""
+        monkeypatch.setenv("COLUMNS", "200")
+        summary_path = self._write_code_summary(tmp_path)
+        # Drop the key the way a summary written before this change lacks it.
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary.pop("config_errors", None)
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+        render_run_completion_report(summary_path)
+
+        output = capsys.readouterr().out
+        assert "Config Errors" not in output
+        assert "Judge Errors" in output
+        assert "Attempted Total" in output
 
 
 # ─── Tests for _render_runtime_details_table ──────────────────────────────────
@@ -663,6 +979,368 @@ class TestRenderRuntimeDetailsTableSafeScoring:
         _render_runtime_details_table(console, "header", rows)
 
 
+# ─── Tests for _render_quiz_details_table ─────────────────────────────────────
+
+
+def _quiz_row(
+    judge_output,
+    *,
+    test_id: str = "quiz_001",
+    passed: bool = False,
+    gold: str = "B",
+    question: str = "Question: Which letter is correct?\nChoices:\nA) a\nB) b",
+) -> dict:
+    """Build a minimal NDJSON row for the quiz category."""
+    return {
+        "test_id": test_id,
+        "framework": "test",
+        "category": "quiz",
+        "mut_model": "test/mut",
+        "judge_model": "openai/gpt-5",
+        "judge_method": "llm",
+        "pass": passed,
+        "summary": "a quiz",
+        "gold": gold,
+        "input": question,
+        "judge_output": judge_output,
+    }
+
+
+class TestRenderQuizDetailsTable:
+    """The quiz detail table shows the judge verdict and the parser cross-check."""
+
+    def test_failed_row_shows_parse_reason(self):
+        console, buf = _capture_console()
+        rows = [
+            _quiz_row(
+                {
+                    "pass": False,
+                    "selected": None,
+                    "score": 0.0,
+                    "explanation": "Ambiguous letters: B, C (multiple_letters)",
+                    "method": "llm",
+                    "parse_reason": "multiple_letters",
+                }
+            )
+        ]
+        _render_quiz_details_table(console, "header", rows)
+
+        output = buf.getvalue()
+        assert "multiple_letters" in output
+        assert "quiz_001" in output
+        assert "llm judge" in output
+
+    def test_missing_selected_and_explanation_do_not_raise(self):
+        """``selected=None`` and a missing explanation must not crash."""
+        console, buf = _capture_console()
+        rows = [
+            _quiz_row(
+                {"pass": False, "score": 0.0, "method": "llm", "parse_reason": "empty"},
+                test_id="quiz_missing",
+            )
+        ]
+        _render_quiz_details_table(console, "header", rows)
+
+        output = buf.getvalue()
+        assert "quiz_missing" in output
+        assert "empty" in output
+
+    def test_non_dict_judge_output_does_not_raise(self):
+        console, _ = _capture_console()
+        rows = [_quiz_row("not a dict", test_id="quiz_broken")]
+        _render_quiz_details_table(console, "header", rows)
+
+    def test_passing_rows_are_not_rendered(self):
+        console, buf = _capture_console()
+        rows = [
+            _quiz_row(
+                {
+                    "pass": True,
+                    "selected": "B",
+                    "score": 1.0,
+                    "explanation": "Selected B; gold B",
+                    "method": "llm",
+                    "parse_reason": "ok",
+                },
+                test_id="quiz_passed",
+                passed=True,
+            )
+        ]
+        _render_quiz_details_table(console, "header", rows)
+
+        assert "quiz_passed" not in buf.getvalue()
+
+    def test_table_shows_the_judge_method_and_note(self):
+        console, buf = _capture_console()
+        rows = [
+            _quiz_row(
+                {
+                    "pass": False,
+                    "selected": "A",
+                    "score": 0.0,
+                    "explanation": "Selected A; gold B",
+                    "method": "llm",
+                    "parse_reason": "ok",
+                }
+            )
+        ]
+        _render_quiz_details_table(console, "header", rows)
+
+        output = buf.getvalue().lower()
+        assert "llm judge" in output
+        assert "judge note" in output
+
+    def test_parser_agreement_is_shown(self):
+        console, buf = _capture_console()
+        rows = [
+            _quiz_row(
+                {
+                    "pass": False,
+                    "selected": "A",
+                    "score": 0.0,
+                    "explanation": "Selected A; gold B",
+                    "method": "llm",
+                    "parse_reason": "ok",
+                    "parser": {"selected": "A", "parse_reason": "ok", "agrees": True},
+                }
+            )
+        ]
+        _render_quiz_details_table(console, "header", rows)
+
+        output = buf.getvalue()
+        assert "agrees" in output
+        assert "disagrees" not in output
+
+    def test_parser_disagreement_is_shown(self):
+        """The judge's letter stays the verdict; the parser cross-check reports the conflict."""
+        console, buf = _capture_console()
+        rows = [
+            _quiz_row(
+                {
+                    "pass": False,
+                    "selected": "A",
+                    "score": 0.0,
+                    "explanation": "Selected A; gold B",
+                    "method": "llm",
+                    "parse_reason": "ok",
+                    "parser": {"selected": "B", "parse_reason": "ok", "agrees": False},
+                }
+            )
+        ]
+        _render_quiz_details_table(console, "header", rows)
+
+        output = buf.getvalue()
+        assert "disagrees" in output
+        # The judge's letter (Answer column) is A, not the parser's B.
+        assert "A" in output
+
+    def test_parser_unknown_without_a_cross_check(self):
+        """A row without a recorded cross-check renders ``unknown``."""
+        console, buf = _capture_console()
+        rows = [
+            _quiz_row(
+                {
+                    "pass": False,
+                    "selected": None,
+                    "score": 0.0,
+                    "explanation": "No parseable letter (no_letter)",
+                    "method": "llm",
+                    "parse_reason": "no_letter",
+                }
+            )
+        ]
+        _render_quiz_details_table(console, "header", rows)
+
+        output = buf.getvalue()
+        assert "unknown" in output
+        assert "no_letter" in output
+
+    def test_judge_error_row_renders_as_an_error_not_a_score(self):
+        console, buf = _capture_console()
+        rows = [
+            _quiz_row(
+                {
+                    "error_kind": "judge_unavailable",
+                    "error": "[Error: provider down]",
+                    "attempts": 3,
+                    "score": None,
+                    "overall_score": None,
+                },
+                test_id="quiz_error",
+            )
+        ]
+        _render_quiz_details_table(console, "header", rows)
+
+        output = buf.getvalue()
+        assert "quiz_error" in output
+        assert "ERROR" in output
+        assert "judge error (judge_unavailable)" in output
+        assert "attempts: 3" in output
+        # No fabricated verdict for an unreachable judge.
+        assert "FAIL" not in output
+
+    def test_attempts_are_shown_when_the_judge_retried(self):
+        console, buf = _capture_console()
+        rows = [
+            _quiz_row(
+                {
+                    "pass": False,
+                    "selected": "A",
+                    "score": 0.0,
+                    "explanation": "Selected A; gold B",
+                    "method": "llm",
+                    "parse_reason": "ok",
+                    "attempts": 2,
+                },
+                test_id="quiz_retry",
+            )
+        ]
+        _render_quiz_details_table(console, "header", rows)
+
+        output = buf.getvalue()
+        assert "quiz_retry" in output
+        assert "attempts: 2" in output
+
+
+class TestRenderRunCompletionReportQuiz:
+    """The quiz summary report must advertise the LLM judge."""
+
+    def _write_quiz_run(self, tmp_path: Path, rows: list[dict], **summary_overrides) -> tuple[Path, Path]:
+        summary = {
+            "framework": "test",
+            "category": "quiz",
+            "model": "test/mut",
+            "judge": "openai/gpt-5",
+            "judge_method": "llm",
+            "dataset_version": "quiz-v2",
+            "total": len(rows),
+            "passed": 1,
+            "partial": 0,
+            "failed": len(rows) - 1,
+            "avg_score": 0.5,
+            "parse_failures": 1,
+            "parse_failure_reasons": {"multiple_letters": 1},
+        }
+        summary.update(summary_overrides)
+        summary_path = tmp_path / "summary.json"
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+        details_path = tmp_path / "details.jsonl"
+        with details_path.open("w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+        return summary_path, details_path
+
+    def test_quiz_report_renders(self, tmp_path: Path):
+        rows = [
+            _quiz_row(
+                {
+                    "pass": False,
+                    "selected": None,
+                    "score": 0.0,
+                    "explanation": "Ambiguous letters: B, C (multiple_letters)",
+                    "method": "llm",
+                    "parse_reason": "multiple_letters",
+                },
+                test_id="quiz_fail",
+            ),
+            _quiz_row(
+                {
+                    "pass": True,
+                    "selected": "B",
+                    "score": 1.0,
+                    "explanation": "Selected B; gold B",
+                    "method": "llm",
+                    "parse_reason": "ok",
+                },
+                test_id="quiz_pass",
+                passed=True,
+            ),
+        ]
+        summary_path, details_path = self._write_quiz_run(tmp_path, rows)
+        render_run_completion_report(summary_path, details_path)
+
+    def test_quiz_report_with_zero_parse_failures(self, tmp_path: Path):
+        rows = [
+            _quiz_row(
+                {
+                    "pass": False,
+                    "selected": "A",
+                    "score": 0.0,
+                    "explanation": "Selected A; gold B",
+                    "method": "llm",
+                    "parse_reason": "ok",
+                },
+                test_id="quiz_fail",
+            )
+        ]
+        summary_path, details_path = self._write_quiz_run(
+            tmp_path, rows, parse_failures=0, parse_failure_reasons={}
+        )
+        render_run_completion_report(summary_path, details_path)
+
+    def test_quiz_summary_shows_llm_scoring(self, tmp_path: Path, capsys, monkeypatch):
+        """The quiz summary table advertises the LLM judge, not a deterministic scorer."""
+        # Give the renderer a wide terminal so the summary table is not clipped.
+        monkeypatch.setenv("COLUMNS", "200")
+        rows = [
+            _quiz_row(
+                {
+                    "pass": False,
+                    "selected": None,
+                    "score": 0.0,
+                    "explanation": "No parseable letter (no_letter)",
+                    "method": "llm",
+                    "parse_reason": "no_letter",
+                },
+                test_id="quiz_fail",
+            )
+        ]
+        summary_path, details_path = self._write_quiz_run(tmp_path, rows)
+        render_run_completion_report(summary_path, details_path)
+
+        output = capsys.readouterr().out
+        assert "Scoring" in output
+        assert "llm" in output
+        assert "deterministic" not in output
+        assert "Pass Rate" in output
+        assert "Parse Failures" in output
+        assert "quiz-v2" in output
+
+    def test_quiz_config_errors_get_their_own_column(self, tmp_path: Path, capsys, monkeypatch):
+        """Config failures are excluded from the pass rate and labelled on their own.
+
+        A clean quiz summary keeps its exact columns — the column appears only
+        when the run actually carried config failures — and an unscorable run
+        reports ``n/a`` instead of a fabricated pass rate.
+        """
+        monkeypatch.setenv("COLUMNS", "200")
+        rows = [
+            _quiz_row(
+                {
+                    "pass": True,
+                    "selected": "B",
+                    "score": 1.0,
+                    "explanation": "Selected B; gold B",
+                    "method": "llm",
+                    "parse_reason": "ok",
+                },
+                test_id="quiz_pass",
+                passed=True,
+            )
+        ]
+        clean_path, _ = self._write_quiz_run(tmp_path, rows)
+        render_run_completion_report(clean_path)
+        assert "Config Errors" not in capsys.readouterr().out
+
+        dirty_path, _ = self._write_quiz_run(
+            tmp_path, rows, config_errors=1, total=0, passed=0, avg_score=None
+        )
+        render_run_completion_report(dirty_path)
+        output = capsys.readouterr().out
+        assert "Config Errors" in output
+        assert "n/a" in output
+
+
 # ─── Cross-module coherence ───────────────────────────────────────────────────
 
 
@@ -701,3 +1379,32 @@ class TestReportViewsReuseSummaryNormalizeScore:
                     f"{module_name} must not define its own {attr}; "
                     "import normalize_score from nichebench.execution.summary instead."
                 )
+
+
+def test_runtime_detail_reports_no_checks_when_runtime_failed_early():
+    from rich.console import Console
+
+    from nichebench.cli.rich_views.reports.detail_runtime import (
+        _render_runtime_details_table,
+    )
+
+    console = Console(record=True, width=120)
+    _render_runtime_details_table(
+        console,
+        "Runtime",
+        [
+            {
+                "test_id": "rt_001",
+                "pass": False,
+                "judge_output": {
+                    "checks": [],
+                    "catastrophic_failure": True,
+                    "hybrid_score": 0.0,
+                    "deterministic_score": 0.0,
+                },
+            }
+        ],
+    )
+    output = console.export_text()
+    assert "No deterministic checks ran" in output
+    assert "All checks passed" not in output

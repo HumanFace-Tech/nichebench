@@ -22,7 +22,8 @@ Callers (e.g. the executor) are responsible for:
 - **Null safety.** Missing optional fields (e.g. `context`, `choices`) are handled gracefully with
   empty-string fallbacks; no exceptions are raised for absent data.
 - **Category-specific contracts:**
-  - `compose_quiz_prompt` / `start_quiz_conversation` — enforces a letter-only answer constraint.
+  - `compose_quiz_prompt` — enforces a letter-only answer constraint and renders
+    each choice exactly once with a dynamic letter (`A`, `B`, …).
   - `compose_code_prompt` / `start_code_conversation` — passes raw prompt text verbatim after context.
   - `compose_bug_prompt` / `start_bug_conversation` — passes raw prompt text verbatim after context.
   - Unknown categories fall through to a generic fallback that concatenates the first available
@@ -34,6 +35,7 @@ from __future__ import annotations
 from typing import Optional
 
 from nichebench.core.datamodel import TestCaseSpec
+from nichebench.core.quiz_text import normalize_choice
 from nichebench.providers.conversation_manager import ConversationManager
 
 
@@ -61,31 +63,37 @@ class MUTPromptComposer:
         2. ``Context: <test_case.context>`` (if ``test_case.context`` is set).
         3. ``Question: <question>`` — drawn from  ``test_case.raw["question"]``,
            falling back to ``test_case.prompt``.
-        4. ``Choices:`` block — one line per choice prefixed with a letter (A, B, C, …).
-           If no choices are present this block is omitted.
+        4. ``Choices:`` block — one line per choice, each prefixed exactly once
+           with a dynamic letter (``A``, ``B``, … ``chr(64 + n)``).  A redundant
+           letter prefix already present in the choice text (``A) text``,
+           ``A) A) text``, ``(A) text``) is stripped first, so the choice is
+           never rendered twice.  If no choices are present this block is omitted.
         5. ``Your answer (letter only):`` — enforces letter-only response format.
 
-        **Caller responsibility** — ``test_case.choices`` must be a list of strings when
-        the question is multiple-choice. No validation is performed.
+        **Caller responsibility** — ``test_case.choices`` should be a list of
+        strings when the question is multiple-choice.  Values are normalised
+        defensively, so a leftover letter prefix never reaches the prompt.
         """
         parts = []
 
         # Add system prompt
-        if system_prompt:
+        if system_prompt and system_prompt.strip():
             parts.append(system_prompt.strip())
 
         # Add context if available
-        if test_case.context:
-            parts.append(f"Context: {test_case.context}")
+        context = (test_case.context or "").strip()
+        if context:
+            parts.append(f"Context: {context}")
 
         # Add the question
         question = test_case.raw.get("question") or test_case.prompt or ""
         parts.append(f"Question: {question}")
 
-        # Add the choices
-        if test_case.choices:
+        # Add the choices — each choice is rendered exactly once
+        choices = [normalize_choice(choice) for choice in (test_case.choices or [])]
+        if choices:
             choices_text = "Choices:"
-            for i, choice in enumerate(test_case.choices):
+            for i, choice in enumerate(choices):
                 letter = chr(65 + i)  # A, B, C, D, ...
                 choices_text += f"\n{letter}) {choice}"
             parts.append(choices_text)
@@ -228,67 +236,15 @@ class MUTPromptComposer:
         return conversation
 
     @staticmethod
-    def start_quiz_conversation(test_case: TestCaseSpec, system_prompt: Optional[str] = None) -> ConversationManager:
-        """Start a conversation for quiz questions (typically single-turn).
-
-        **Conversation contract**
-
-        - ``ConversationManager`` is initialised with ``max_turns=1`` — callers should
-          not append additional turns for standard quiz tasks.
-        - The initial user prompt is composed as::
-
-              Context: <test_case.context>   (if set)
-              Question: <question>
-              Choices:                     (if test_case.choices is set)
-              A) <choice[0]>
-              B) <choice[1]>
-              ...
-              Your answer (letter only):
-
-        - ``system_prompt`` (or an empty string) is passed to
-          ``conversation.start_conversation()``.
-
-        Returns:
-            A ``ConversationManager`` with exactly one initial turn recorded.
-        """
-        conversation = ConversationManager(max_turns=1)  # Quizzes should be single-turn
-
-        parts = []
-
-        if system_prompt:
-            # System prompt will be added by conversation manager
-            pass
-
-        if test_case.context:
-            parts.append(f"Context: {test_case.context}")
-
-        question = test_case.raw.get("question") or test_case.prompt or ""
-        parts.append(f"Question: {question}")
-
-        if test_case.choices:
-            choices_text = "Choices:"
-            for i, choice in enumerate(test_case.choices):
-                letter = chr(65 + i)  # A, B, C, D, ...
-                choices_text += f"\n{letter}) {choice}"
-            parts.append(choices_text)
-            parts.append("Your answer (letter only):")
-        else:
-            parts.append("Your answer:")
-
-        user_prompt = "\n\n".join(parts)
-
-        conversation.start_conversation(system_prompt=system_prompt or "", user_prompt=user_prompt)
-
-        return conversation
-
-    @staticmethod
     def start_bug_conversation(test_case: TestCaseSpec, system_prompt: Optional[str] = None) -> ConversationManager:
         """Start a multi-turn conversation for bug fixing.
 
         **Conversation contract**
 
-        - ``ConversationManager`` is initialised with ``max_turns=4`` to allow
-          back-and-forth clarification or iterative fixes.
+        - ``ConversationManager`` is initialised with ``max_turns`` read from
+          ``test_case.raw["max_turns"]`` (manifest ``max_turns``).  The value
+          defaults to ``4`` when absent or unparseable and is clamped to
+          ``1..8``.
         - The initial user prompt is composed as::
 
               Context: <test_case.context>   (if set)
@@ -302,7 +258,13 @@ class MUTPromptComposer:
         Returns:
             A ``ConversationManager`` with the initial turn already recorded.
         """
-        conversation = ConversationManager(max_turns=4)  # Bug fixes might need a few turns
+        raw_max_turns = test_case.raw.get("max_turns", 4)
+        try:
+            max_turns = int(raw_max_turns)
+        except (TypeError, ValueError):
+            max_turns = 4
+        max_turns = max(1, min(8, max_turns))
+        conversation = ConversationManager(max_turns=max_turns)
 
         # Compose the initial user prompt - NO multi-turn instructions here
         parts = []

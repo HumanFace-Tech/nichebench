@@ -1,7 +1,6 @@
 """
 CLI command: report
 - Loads results JSON (from results/<framework>/<task>/<model>/<timestamp>/summary.json)
-- Optionally uploads to Confident AI (deepeval cloud) if --confident-ai is set
 - Always prints a Rich table summary
 """
 
