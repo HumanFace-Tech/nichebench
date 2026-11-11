@@ -32,12 +32,17 @@ Exact shapes:
 * ``score_code_generation`` / ``score_bug_fixing`` →
   ``{"criteria", "overall_score", "judge_overall_score", "summary",
   "attempts", "raw"}`` (raises ``JudgeError`` when unusable)
-* ``score_runtime`` → ``{"criteria", "overall_score", "summary", "raw"}``
+* ``score_runtime`` → ``{"criteria", "overall_score", "judge_overall_score",
+  "summary", "attempts", "raw"}`` (raises ``JudgeError`` when unusable)
 
 Failure handling contract
 =========================
-* ``score_runtime`` raises ``RuntimeError`` on API/network failure so the
-  executor can fall back to deterministic-only scoring.
+* ``score_runtime`` retries unusable judge output (``[Error: ...]``,
+  empty/non-JSON, missing/non-list ``criteria``, a malformed criterion in a
+  scored position) up to ``max_attempts`` times, then raises ``JudgeError``
+  carrying the error ``kind`` and attempt count.  Its ``overall_score`` is
+  always recomputed from the weighted criteria; the judge's own number is
+  kept as ``judge_overall_score`` for audit only.
 * ``score_code_generation`` / ``score_bug_fixing`` / ``score_quiz`` retry
   unusable judge output (``[Error: ...]``, empty/non-JSON, missing
   criteria / missing ``selected``) up to ``max_attempts`` times, then

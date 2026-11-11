@@ -87,7 +87,7 @@ poetry run mypy src
 
 - **Quiz:** `LiteLLMJudge.score_quiz` selects a letter from the candidate answer; NicheBench compares that letter with the gold letter for a binary score. The deterministic parser is an audit cross-check only and never decides the score. `--judge` selects the quiz judge model.
 - **Quiz, code generation, and bug fixing:** judge calls retry up to 3 times on transient or parse failures. Exhausted quiz failures (`judge_unavailable`, `judge_invalid_json`, `judge_missing_selected`, or `judge_out_of_range`) are counted as `judge_errors` and excluded from quiz averages. Code/bug use direct `LiteLLMJudge` rubric evaluation (no DeepEval); NicheBench recomputes and clamps the score from criteria (true=1, partial=0.5, false/missing=0), and excludes judge-error rows from averages.
-- **Runtime:** deterministic checks and judge score form a weighted hybrid. Any critical check failure sets `passed=False`; the default threshold is `0.7`.
+- **Runtime:** deterministic checks and judge score form a weighted hybrid. Any critical check failure sets `passed=False`; the default threshold is `0.7`. Runtime judge outages and harness/config failures are reported as errors and excluded from averages instead of scoring zero.
 
 Quiz data choices are plain text without letter prefixes. The quiz data repair and rebalance was applied in the private data repo. `dataset_version: quiz-v2`; distribution is A=25 and B–F=24 each. Do not add prefixes, truncate choices, or introduce mappings.
 

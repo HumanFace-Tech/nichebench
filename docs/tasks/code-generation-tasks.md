@@ -61,23 +61,41 @@ sanity pass (`src/nichebench/metrics/sanity.py`). It is structural only: no
 class-name, namespace, architecture, or Drupal-semantic inspection.
 
 **Hard findings** fail the task without calling the judge (`final_score = 0.0`,
-`passed = false`, `error_kind` set to the check name):
+`passed = false`, `error_kind` set to the check name). There are only two:
 
 | Check | Trigger |
 |---|---|
-| `sanity_no_code` | no fenced block **and** no `FILENAME:` / `PATCH:` / `REPLACE:` marker |
+| `sanity_no_code` | empty or whitespace-only response — there is nothing at all to judge |
 | `sanity_truncated` | unbalanced ``` fences, a fence still open at the end of the response, or a response ending in `... [truncated]` |
+
+Anything non-empty but uncertain — unfenced YAML, a bare PHP statement, an
+unfenced diff, plain prose — is **advisory** and still reaches the judge;
+formatting never auto-zeros codeable work.
 
 **Advisory findings** never change the score. They are attached to the judge
 output as `sanity_findings` (also written to `TestResult.sanity_findings`)
 and rendered as the `ok` / `advisory` / `hard` indicator in the code detail
 table:
 
-- `sanity_no_declared_files` — code present but no declared path.
+- `sanity_no_code` (advisory) — a non-empty response with no fenced block, no
+  declared path and no recognised code shape (prose, bare YAML, a single
+  statement). The response is judged; only the missing code shape is reported.
+- `sanity_unfenced_code` — code-like content (a PHP open tag, a declaration
+  keyword at the start of a line, a brace) or a unified diff, but no fenced
+  block and no declared path. The response is still judged; only the missing
+  fence is reported.
+- `sanity_no_declared_files` — a fenced code block is present but no declared path.
 - `sanity_duplicate_path` — the same declared path appears more than once.
 - `sanity_yaml_parse` / `sanity_json_parse` — a full-file YAML/JSON block does not parse.
 - `sanity_php_syntax` — `php -l` reported a syntax error (advisory).
 - `sanity_php_skipped` — no `php` binary on the host, so the lint is skipped; never a failure.
+
+Code detection is shape-based only: a `<?php` tag, a `function` / `class` /
+`interface` / `trait` / `def` / `import` / `from` / `public` / `private` /
+`protected` / `namespace` / `use` keyword at the start of a line, or a brace.
+Class names, namespaces and framework semantics are never inspected. Content
+matching none of these shapes is not a failure either — only an empty or
+truncated response is.
 
 **Expected markers:** `FILENAME: path`, `PATCH: path`, `REPLACE: path`, each
 followed by a fenced code block; generic fenced blocks are accepted too, and

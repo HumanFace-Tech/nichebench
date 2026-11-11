@@ -157,6 +157,115 @@ def test_score_quiz_missing_selected_raises_judge_missing_selected():
     assert client.calls == 3
 
 
+def test_score_quiz_explicit_null_selected_is_a_scored_abstention():
+    """``"selected": null`` with a verdict and an explanation is a scored zero."""
+    response = '{"pass": false, "selected": null, "score": 0, "explanation": "no identifiable answer"}'
+    client = ScriptedClient(response)
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    result = judge.score_quiz(question="Test", choices=["A", "B"], gold="A", candidate="A")
+
+    assert result["status"] == "abstained"
+    assert result["selected"] is None
+    assert result["pass"] is False
+    assert result["score"] == 0.0
+    assert result["overall_score"] == 0.0
+    assert result["explanation"] == "no identifiable answer"
+    assert result["judge_pass"] is False
+    assert result["attempts"] == 1
+    assert result["raw"] == response
+    # An abstention is a model failure — never retried.
+    assert client.calls == 1
+
+
+def test_score_quiz_external_status_never_overrides_a_valid_selection():
+    """A judge-supplied ``status`` cannot turn a valid selection into an abstention."""
+    response = '{"selected":"A","pass":true,"explanation":"correct","status":"abstained"}'
+    client = ScriptedClient(response)
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    result = judge.score_quiz(question="Test", choices=["A", "B"], gold="A", candidate="A")
+
+    assert result["selected"] == "A"
+    assert result["pass"] is True
+    assert result["score"] == 1.0
+    assert result["overall_score"] == 1.0
+    # The external status is dropped; no abstention marker is set.
+    assert result.get("status") is None
+    assert client.calls == 1
+
+
+def test_score_quiz_external_status_is_ignored_when_scoring_a_wrong_answer():
+    """``status: "abstained"`` with a real (wrong) selection scores the selection."""
+    response = '{"selected":"B","pass":false,"explanation":"claims B","status":"abstained"}'
+    client = ScriptedClient(response)
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    result = judge.score_quiz(question="Test", choices=["A", "B"], gold="A", candidate="B")
+
+    assert result["selected"] == "B"
+    assert result["pass"] is False
+    assert result["score"] == 0.0
+    assert result.get("status") is None
+    assert client.calls == 1
+
+
+def test_score_quiz_null_selected_with_pass_true_is_retried():
+    """``selected: null`` with ``pass: true`` is not an abstention — it is retried."""
+    response = '{"pass": true, "selected": null, "score": 1, "explanation": "no identifiable answer"}'
+    client = ScriptedClient(response)
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    with pytest.raises(JudgeError) as exc_info:
+        judge.score_quiz(question="Test", choices=["A", "B"], gold="A", candidate="A")
+
+    assert exc_info.value.kind == "judge_missing_selected"
+    assert client.calls == 3
+
+
+def test_score_quiz_abstention_status_is_set_by_the_adapter_not_the_judge():
+    """A null selection with ``pass: false`` is an abstention regardless of ``status``."""
+    response = (
+        '{"pass": false, "selected": null, "score": 0, '
+        '"explanation": "ambiguous", "status": "answered"}'
+    )
+    client = ScriptedClient(response)
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    result = judge.score_quiz(question="Test", choices=["A", "B"], gold="A", candidate="A")
+
+    assert result["status"] == "abstained"
+    assert result["selected"] is None
+    assert result["score"] == 0.0
+    assert client.calls == 1
+
+
+def test_score_quiz_null_selected_without_explanation_is_retried():
+    """A bare ``null`` without an explanation is not an abstention."""
+    response = '{"pass": false, "selected": null, "score": 0}'
+    client = ScriptedClient(response)
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    with pytest.raises(JudgeError) as exc_info:
+        judge.score_quiz(question="Test", choices=["A", "B"], gold="A", candidate="A")
+
+    assert exc_info.value.kind == "judge_missing_selected"
+    assert client.calls == 3
+
+
+def test_score_quiz_null_selected_without_boolean_pass_is_retried():
+    """A bare ``null`` without a boolean verdict is not an abstention."""
+    response = '{"selected": null, "explanation": "no identifiable answer"}'
+    client = ScriptedClient(response)
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    with pytest.raises(JudgeError) as exc_info:
+        judge.score_quiz(question="Test", choices=["A", "B"], gold="A", candidate="A")
+
+    assert exc_info.value.kind == "judge_missing_selected"
+    assert client.calls == 3
+
+
 @pytest.mark.parametrize("selected", ["", "   ", "Paris", "AB"])
 def test_score_quiz_unusable_selected_raises_judge_missing_selected(selected):
     """Blank or non-letter ``selected`` values never count as a verdict."""
@@ -311,20 +420,25 @@ def test_score_runtime_recomputes_weighted_score_when_missing():
     assert abs(result["overall_score"] - 0.85) < 0.001
 
 
-def test_score_runtime_invalid_json_returns_zero():
-    """Invalid JSON from judge → overall_score is 0.0, no randomness."""
-    checklist = [{"id": "x", "question": "Q?", "weight": 1.0}]
-    client = MockClient("not json at all")
-    judge = LiteLLMJudge(client=client)
+def test_score_runtime_invalid_json_raises_judge_invalid_json():
+    """Invalid JSON from judge → retried, then JudgeError(judge_invalid_json).
 
-    result = judge.score_runtime(
-        task_description="Task",
-        artifact_summary="diff",
-        checklist_items=checklist,
-    )
-    assert result["overall_score"] == 0.0
-    assert result["criteria"][0]["pass"] is False
-    assert "raw" in result
+    An unusable verdict is never silently scored as 0.0.
+    """
+    checklist = [{"id": "x", "question": "Q?", "weight": 1.0}]
+    client = ScriptedClient("not json at all")
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    with pytest.raises(JudgeError) as excinfo:
+        judge.score_runtime(
+            task_description="Task",
+            artifact_summary="diff",
+            checklist_items=checklist,
+        )
+
+    assert excinfo.value.kind == "judge_invalid_json"
+    assert excinfo.value.attempts == 3
+    assert client.calls == 3
 
 
 def test_score_runtime_no_checklist_returns_one():
@@ -366,6 +480,147 @@ def test_score_runtime_positional_fallback():
     assert abs(result["overall_score"] - 0.5) < 0.001
 
 
+def test_score_runtime_overall_score_is_recomputed_from_criteria():
+    """A judge's own inflated ``overall_score`` never wins over the criteria."""
+    checklist = [
+        {"id": "a", "question": "Q1?", "weight": 1.0},
+        {"id": "b", "question": "Q2?", "weight": 1.0},
+    ]
+    json_resp = (
+        '{"criteria": ['
+        '{"criterion_id": "a", "pass": false, "explanation": "not done"},'
+        '{"criterion_id": "b", "pass": false, "explanation": "not done"}'
+        '], "overall_score": 1.0, "summary": "All good"}'
+    )
+    client = MockClient(json_resp)
+    judge = LiteLLMJudge(client=client)
+
+    result = judge.score_runtime(
+        task_description="Task",
+        artifact_summary="diff",
+        checklist_items=checklist,
+    )
+
+    assert result["overall_score"] == 0.0
+    assert result["judge_overall_score"] == 1.0
+    assert result["attempts"] == 1
+    assert result["raw"] == json_resp
+
+
+_DUPLICATE_CHECKLIST = [
+    {"id": "a", "question": "Q1?", "weight": 1.0},
+    {"id": "b", "question": "Q2?", "weight": 1.0},
+]
+
+
+def test_score_runtime_missing_criterion_scores_half_not_a_zero():
+    """``a`` true, ``b`` missing → 0.5: the missing item contributes nothing."""
+    json_resp = '{"criteria": [{"criterion_id": "a", "pass": true, "explanation": "done"}]}'
+    judge = LiteLLMJudge(client=MockClient(json_resp))
+
+    result = judge.score_runtime(
+        task_description="Task",
+        artifact_summary="diff",
+        checklist_items=_DUPLICATE_CHECKLIST,
+    )
+
+    assert result["overall_score"] == pytest.approx(0.5)
+
+
+def test_score_runtime_duplicate_criterion_id_does_not_inflate_the_score():
+    """``a`` reported twice must never credit ``b``: the score stays 0.5."""
+    json_resp = (
+        '{"criteria": ['
+        '{"criterion_id": "a", "pass": true, "explanation": "done"},'
+        '{"criterion_id": "a", "pass": true, "explanation": "done again"}'
+        ']}'
+    )
+    judge = LiteLLMJudge(client=MockClient(json_resp))
+
+    result = judge.score_runtime(
+        task_description="Task",
+        artifact_summary="diff",
+        checklist_items=_DUPLICATE_CHECKLIST,
+    )
+
+    assert result["overall_score"] == pytest.approx(0.5)
+
+
+def test_score_runtime_extra_duplicate_criterion_does_not_override_a_failure():
+    """``a`` true, ``b`` false, extra ``a`` true → 0.5, never 1.0."""
+    json_resp = (
+        '{"criteria": ['
+        '{"criterion_id": "a", "pass": true, "explanation": "done"},'
+        '{"criterion_id": "b", "pass": false, "explanation": "missing"},'
+        '{"criterion_id": "a", "pass": true, "explanation": "done again"}'
+        ']}'
+    )
+    judge = LiteLLMJudge(client=MockClient(json_resp))
+
+    result = judge.score_runtime(
+        task_description="Task",
+        artifact_summary="diff",
+        checklist_items=_DUPLICATE_CHECKLIST,
+    )
+
+    assert result["overall_score"] == pytest.approx(0.5)
+
+
+def test_score_runtime_non_dict_criterion_in_scored_position_is_retried():
+    """A criterion entry that is not an object in a scored position is retried."""
+    checklist = [{"id": "a", "question": "Q?", "weight": 1.0}]
+    json_resp = '{"criteria": ["not an object"], "overall_score": 1.0, "summary": "weird"}'
+    client = ScriptedClient(json_resp)
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    with pytest.raises(JudgeError) as exc_info:
+        judge.score_runtime(
+            task_description="Task",
+            artifact_summary="diff",
+            checklist_items=checklist,
+        )
+
+    assert exc_info.value.kind == "judge_invalid_json"
+    assert exc_info.value.attempts == 3
+    assert client.calls == 3
+
+
+def test_score_runtime_missing_criteria_is_retried():
+    """A verdict without a criteria list is retried, then raised."""
+    client = ScriptedClient('{"summary": "no criteria at all", "overall_score": 1.0}')
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    with pytest.raises(JudgeError) as exc_info:
+        judge.score_runtime(
+            task_description="Task",
+            artifact_summary="diff",
+            checklist_items=[{"id": "a", "question": "Q?", "weight": 1.0}],
+        )
+
+    assert exc_info.value.kind == "judge_missing_criteria"
+    assert exc_info.value.attempts == 3
+    assert client.calls == 3
+
+
+def test_score_runtime_retries_then_succeeds():
+    """An unusable attempt is retried; the first usable verdict wins."""
+    checklist = [{"id": "a", "question": "Q?", "weight": 1.0}]
+    good = '{"criteria": [{"criterion_id": "a", "pass": true, "explanation": "ok"}], "overall_score": 1.0}'
+    client = ScriptedClient("[Error: 429 rate limited]", good)
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
+
+    result = judge.score_runtime(
+        task_description="Task",
+        artifact_summary="diff",
+        checklist_items=checklist,
+    )
+
+    assert client.calls == 2
+    assert result["attempts"] == 2
+    assert result["overall_score"] == 1.0
+    assert "error_kind" not in result
+
+
 def test_score_runtime_prompt_includes_all_sections():
     """Prompt must include task description, artifacts, and checklist."""
 
@@ -395,22 +650,26 @@ def test_score_runtime_prompt_includes_all_sections():
     assert "You are strict." in prompt
 
 
-def test_score_runtime_api_error_raises():
-    """Client API errors (model not found, network) must propagate as RuntimeError.
+def test_score_runtime_api_error_raises_judge_unavailable():
+    """Client API errors (rate limits, model not found) are retried, then JudgeError.
 
-    This lets the executor's outer except-block leave judge_score=None so the
-    run falls back to deterministic-only scoring instead of scoring the MUT as 0.
+    An unreachable judge is never scored as 0.0: after ``max_attempts`` tries
+    the judge reports a ``judge_unavailable`` error instead.
     """
     checklist = [{"id": "x", "question": "Q?", "weight": 1.0}]
-    client = MockClient("[Error: LiteLLM error after 3 attempts: model_not_found]")
-    judge = LiteLLMJudge(client=client)
+    client = ScriptedClient("[Error: HTTP 429]")
+    judge = LiteLLMJudge(client=client, sleeper=lambda _: None)
 
-    with pytest.raises(RuntimeError, match=r"\[Error:"):
+    with pytest.raises(JudgeError) as exc_info:
         judge.score_runtime(
             task_description="Task",
             artifact_summary="diff",
             checklist_items=checklist,
         )
+
+    assert exc_info.value.kind == "judge_unavailable"
+    assert exc_info.value.attempts == 3
+    assert client.calls == 3
 
 
 def test_score_code_generation_accepts_criterion_alias():

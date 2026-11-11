@@ -15,6 +15,11 @@ Judge infrastructure failures
 configuration failures (``error_kind=config_error``) render as their own
 "config error" line so the two infrastructure classes stay apart; and
 verdicts that needed more than one judge attempt show their attempt count.
+
+Legacy result files may carry criterion entries that are not mappings (a bare
+string, a number, ``null``); those are rendered as a "malformed" placeholder
+instead of being read like a criterion, and they are never counted as a
+passed or failed criterion.
 """
 
 from typing import Any, Mapping, Optional, Sequence
@@ -159,11 +164,17 @@ def _render_code_details_table(
             criteria = judge_output.get("criteria", [])
             judge_summary = judge_output.get("summary", "No summary provided")
 
-            # Calculate criteria passed/partial/failed
-            if criteria:
-                passed_criteria = sum(1 for c in criteria if c.get("pass") is True)
-                partial_criteria = sum(1 for c in criteria if c.get("pass") == "partial")
-                failed_criteria = sum(1 for c in criteria if c.get("pass") is False)
+            # Calculate criteria passed/partial/failed.  Legacy result files
+            # may carry criterion entries that are not mappings (a bare
+            # string, a number, null); those are rendered as a placeholder
+            # instead of being read like a criterion or counted as a pass.
+            if isinstance(criteria, list) and criteria:
+                well_formed = [c for c in criteria if isinstance(c, Mapping)]
+                malformed_count = len(criteria) - len(well_formed)
+
+                passed_criteria = sum(1 for c in well_formed if c.get("pass") is True)
+                partial_criteria = sum(1 for c in well_formed if c.get("pass") == "partial")
+                failed_criteria = sum(1 for c in well_formed if c.get("pass") is False)
 
                 criteria_parts = []
                 if passed_criteria > 0:
@@ -172,7 +183,19 @@ def _render_code_details_table(
                     criteria_parts.append(f"[bold yellow]🟡 {partial_criteria}[/bold yellow]")
                 if failed_criteria > 0:
                     criteria_parts.append(f"[bold red]❌ {failed_criteria}[/bold red]")
+                if malformed_count > 0:
+                    # A malformed entry is never counted as passed or failed —
+                    # it is flagged, not scored.
+                    criteria_parts.append("[bold red]⚠ malformed[/bold red]")
+                    judge_summary = (
+                        f"{judge_summary}, malformed criterion"
+                        if isinstance(judge_summary, str)
+                        else "malformed criterion"
+                    )
 
+                # A malformed-only list still renders its placeholder; a list of
+                # well-formed criteria with no recognised ``pass`` value keeps
+                # the original "0" readout.
                 criteria_text = "\n".join(criteria_parts) if criteria_parts else "0"
             else:
                 criteria_text = "N/A"

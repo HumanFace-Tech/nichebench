@@ -1,9 +1,10 @@
 """Structural sanity checks for code-generation model outputs.
 
 This layer is deliberately *lean*: it fails a response outright only when
-there is no code at all or when the response is obviously truncated.
-Missing declared paths, duplicate paths and language parse complaints are
-advisory — they are attached to the judge output and never lower the score.
+it is empty or when the response is obviously truncated.  Missing declared
+paths, unfenced or uncertain content, duplicate paths and language parse
+complaints are advisory — they are attached to the judge output and never
+lower the score.
 
 Expected response markers
 =========================
@@ -11,6 +12,12 @@ Expected response markers
 introduce a fenced code block; generic fenced blocks (```` ```lang ... ``` ````)
 are captured too without assuming a path.  Narration before, between and
 around blocks is tolerated.
+
+Code that arrives *without* a fence or marker (a bare ``<?php`` block, a
+YAML document, a unified diff, for example) is still potentially valid
+work: it is reported as an advisory finding and still reaches the judge.
+Content with no recognised code shape at all (plain prose) is advisory
+too — only an empty or whitespace-only response is hard.
 
 What this module never does
 ===========================
@@ -41,6 +48,23 @@ _KIND_BY_MARKER = {"FILENAME": "filename", "PATCH": "patch", "REPLACE": "replace
 _FENCE_PREFIX = "```"
 _TRUNCATION_MARKER = "[truncated]"
 _MAX_EVIDENCE = 200
+
+# Conservative code signals used when a response carries no fence and no
+# marker.  They only look at *shape* (a PHP open tag, a declaration keyword at
+# the start of a line, a brace) — never at class names, namespaces or
+# framework semantics.
+_CODE_SIGNALS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"<\?php\b", re.IGNORECASE),
+    re.compile(r"^\s*function\s+\w", re.MULTILINE),
+    re.compile(r"^\s*(?:final\s+|abstract\s+)?(?:class|interface|trait|enum)\s+\w", re.MULTILINE),
+    re.compile(r"^\s*def\s+\w", re.MULTILINE),
+    re.compile(r"^\s*import\s+[\w.]", re.MULTILINE),
+    re.compile(r"^\s*from\s+[\w.]+\s+import\b", re.MULTILINE),
+    re.compile(r"^\s*(?:public|private|protected)\s+\w", re.MULTILINE),
+    re.compile(r"^\s*namespace\s+\w", re.MULTILINE),
+    re.compile(r"^\s*use\s+[\\\w]", re.MULTILINE),
+    re.compile(r"[{}]"),
+)
 
 
 @dataclass(frozen=True)
@@ -165,6 +189,17 @@ def _looks_like_json(content: str) -> bool:
     return content.lstrip()[:1] in ("{", "[")
 
 
+def _looks_like_code(response: str) -> bool:
+    """Return ``True`` when ``response`` contains code-like content.
+
+    The check is deliberately shape-based and conservative: a PHP open tag, a
+    declaration keyword at the start of a line, or a brace.  Prose without
+    any of those markers is *not* code — but it is still only an advisory
+    finding; only an empty response is a hard failure.
+    """
+    return any(pattern.search(response) for pattern in _CODE_SIGNALS)
+
+
 def _php_lint(block: CodeBlock) -> list[SanityFinding]:
     """Run ``php -l`` on a temporary copy of ``block``.
 
@@ -284,6 +319,13 @@ def structural_checks(response: str) -> list[SanityFinding]:
 
     Hard findings (``sanity_no_code``, ``sanity_truncated``) mean the
     response cannot be scored at all and should short-circuit the judge.
+    ``sanity_no_code`` is hard **only** for an empty or whitespace-only
+    response: any non-empty response that carries no fence and no
+    ``FILENAME``/``PATCH``/``REPLACE`` marker is advisory instead —
+    ``sanity_unfenced_code`` when it looks like code or a diff,
+    ``sanity_no_code`` (advisory) when its shape is uncertain (prose,
+    bare YAML, a single statement) — and always reaches the judge.  An
+    unbalanced/truncated fence stays hard.
     Every other finding is ``advisory`` (or ``skipped``) and only
     informational.  Class names, namespaces and framework semantics are
     never inspected.
@@ -292,14 +334,43 @@ def structural_checks(response: str) -> list[SanityFinding]:
     findings: list[SanityFinding] = []
 
     if parsed.fence_count == 0 and not parsed.marker_paths:
-        findings.append(
-            SanityFinding(
-                check="sanity_no_code",
-                severity="hard",
-                message="No fenced code block and no FILENAME/PATCH/REPLACE marker in the response",
-                evidence=_snippet(response),
+        if not response.strip():
+            findings.append(
+                SanityFinding(
+                    check="sanity_no_code",
+                    severity="hard",
+                    message=(
+                        "Empty response: no code block, no FILENAME/PATCH/REPLACE "
+                        "marker and no content to judge"
+                    ),
+                    evidence="",
+                )
             )
-        )
+        elif _looks_like_code(response) or _looks_like_diff(response):
+            findings.append(
+                SanityFinding(
+                    check="sanity_unfenced_code",
+                    severity="advisory",
+                    message=(
+                        "Code-like content in the response but no fenced block "
+                        "and no FILENAME/PATCH/REPLACE marker"
+                    ),
+                    evidence=_snippet(response),
+                )
+            )
+        else:
+            findings.append(
+                SanityFinding(
+                    check="sanity_no_code",
+                    severity="advisory",
+                    message=(
+                        "No fenced code block, no FILENAME/PATCH/REPLACE marker "
+                        "and no recognised code shape; uncertain content is "
+                        "left to the judge"
+                    ),
+                    evidence=_snippet(response),
+                )
+            )
 
     if parsed.open_fence or response.strip().endswith(_TRUNCATION_MARKER):
         evidence = "open ``` fence at end of response" if parsed.open_fence else _snippet(response[-_MAX_EVIDENCE:])

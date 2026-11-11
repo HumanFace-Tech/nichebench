@@ -344,7 +344,28 @@ def execute_runtime_test(self, test_case: TestCaseSpec, trial: int = 0) -> TestR
             "checks": checks_payload,
             "runtime_judge": runtime_judge_output,
         }
-        result.passed = hybrid_score.passed
+
+        judge_error = executor_stages.judge_error_kind(runtime_judge_output)
+        if judge_error is not None:
+            # The judge never produced a usable verdict: the row says nothing
+            # about the model.  The deterministic checks are kept, but every
+            # score is null — never a fabricated zero — and the row is
+            # excluded from the run averages as a judge error.
+            result.error_kind = judge_error
+            attempts = runtime_judge_output.get("attempts")
+            result.judge_attempts = attempts if isinstance(attempts, int) and not isinstance(attempts, bool) else 1
+            runtime_judge_output["overall_score"] = None
+            runtime_judge_output["judge_score"] = None
+            runtime_judge_output["hybrid_score"] = None
+            runtime_judge_output["final_score"] = None
+            result.judge_output["error_kind"] = judge_error
+            result.judge_output["judge_score"] = None
+            result.judge_output["hybrid_score"] = None
+            result.judge_output["final_score"] = None
+            result.judge_output["overall_score"] = None
+            result.passed = False
+        else:
+            result.passed = hybrid_score.passed
 
         executor_stages.stage_judge_scoring(trace=trace, hybrid_score=hybrid_score)
 

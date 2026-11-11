@@ -12,18 +12,50 @@ Renders runtime output in two focused panels:
 
 3. **Provenance & Summary panel**: compact secondary panel.
 
+Rows whose judge never produced a usable verdict (``error_kind`` is a
+``judge_*`` kind or ``config_error``) carry no score: they render as
+``ERROR`` / ``N/A`` instead of a 0% score, they are left out of the
+multi-trial means (a missing score is not a zero), and they are listed with
+their error kind and attempt count in a separate *Judge Errors* panel.
+
 Supports multi-trial grouping with mean ± stddev display.
 """
 
 import math
 from collections import defaultdict
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 from nichebench.execution.summary import normalize_score
+from nichebench.metrics.types import JUDGE_ERROR_CONFIG
+
+
+def _row_error_kind(row: Mapping, judge_output: Any) -> Optional[str]:
+    """Return the judge/config error kind of a runtime row, if any.
+
+    ``error_kind`` may live in the row (written by ``TestResult.to_dict()``)
+    or nested in the judge output.  Only judge (``judge_*``) and
+    configuration (``config_error``) failures are treated as scoreless rows.
+    """
+    kind = judge_output.get("error_kind") if isinstance(judge_output, Mapping) else None
+    if not (isinstance(kind, str) and kind):
+        kind = row.get("error_kind")
+    if isinstance(kind, str) and kind and (kind.startswith("judge_") or kind == JUDGE_ERROR_CONFIG):
+        return kind
+    return None
+
+
+def _row_attempts(row: Mapping, judge_output: Any) -> Optional[int]:
+    """Return the judge attempt count of a runtime row, if any."""
+    attempts = judge_output.get("attempts") if isinstance(judge_output, Mapping) else None
+    if not (isinstance(attempts, int) and not isinstance(attempts, bool)):
+        attempts = row.get("judge_attempts")
+    if isinstance(attempts, int) and not isinstance(attempts, bool):
+        return attempts
+    return None
 
 
 def _render_runtime_details_table(console: Console, header_text: str, rows: Sequence[Mapping]):
@@ -60,29 +92,46 @@ def _render_runtime_details_table(console: Console, header_text: str, rows: Sequ
     provenance_rows = []
     failed_checks_by_test: dict = {}
     zero_check_tests: list = []
+    judge_errors_by_test: dict = {}
 
     for test_id, test_rows in id_groups.items():
         # Use the last trial's row for metadata (checks, provenance)
         representative = test_rows[-1]
         judge_output = representative.get("judge_output", {})
 
+        # Rows whose judge failed carry no score at all: they are excluded
+        # from the means (a missing score is not a zero) and rendered as an
+        # error instead of a percentage.
+        scored_rows = [r for r in test_rows if _row_error_kind(r, r.get("judge_output", {})) is None]
+        error_rows = [r for r in test_rows if _row_error_kind(r, r.get("judge_output", {})) is not None]
+
+        if error_rows:
+            first_error = error_rows[-1]
+            error_judge_output = first_error.get("judge_output", {})
+            judge_errors_by_test[test_id] = (
+                _row_error_kind(first_error, error_judge_output),
+                _row_attempts(first_error, error_judge_output),
+            )
+
         hybrid_scores = []
         det_scores = []
         judge_scores_list = []
         for r in test_rows:
             jo = r.get("judge_output", {})
-            hybrid_scores.append(normalize_score(jo.get("hybrid_score"), 0.0))
             det_scores.append(normalize_score(jo.get("deterministic_score"), 0.0))
+        for r in scored_rows:
+            jo = r.get("judge_output", {})
+            hybrid_scores.append(normalize_score(jo.get("hybrid_score"), 0.0))
             js_raw = jo.get("judge_score")
             if js_raw is not None:
                 judge_scores_list.append(normalize_score(js_raw, 0.0))
 
         k = len(hybrid_scores)
-        hybrid_mean = sum(hybrid_scores) / k
-        det_mean = sum(det_scores) / k
+        hybrid_mean = sum(hybrid_scores) / k if k else None
+        det_mean = sum(det_scores) / len(det_scores) if det_scores else None
         judge_mean = sum(judge_scores_list) / len(judge_scores_list) if judge_scores_list else None
 
-        if k > 1:
+        if hybrid_mean is not None and k > 1:
             variance = sum((s - hybrid_mean) ** 2 for s in hybrid_scores) / (k - 1)
             hybrid_std = math.sqrt(variance)
         else:
@@ -94,7 +143,7 @@ def _render_runtime_details_table(console: Console, header_text: str, rows: Sequ
         gate_text = "[bold green]PASS[/bold green]" if deterministic_gate_passed else "[bold red]FAIL[/bold red]"
 
         # Format deterministic percentage with decimals
-        det_pct = det_mean * 100
+        det_pct = (det_mean or 0.0) * 100
         if det_pct == 100.0:
             deterministic_text = "100.00%"
         elif det_pct == 0.0:
@@ -102,7 +151,8 @@ def _render_runtime_details_table(console: Console, header_text: str, rows: Sequ
         else:
             deterministic_text = f"{det_pct:.2f}%"
 
-        # Format judge percentage with decimals
+        # Format judge percentage with decimals.  A judge that never
+        # answered has no percentage at all — it is an error, not a 0%.
         judge_text = "N/A"
         if judge_mean is not None:
             jp = judge_mean * 100
@@ -112,9 +162,16 @@ def _render_runtime_details_table(console: Console, header_text: str, rows: Sequ
                 judge_text = "0.00%"
             else:
                 judge_text = f"{jp:.2f}%"
+        elif error_rows:
+            judge_text = "[bold red]ERROR[/bold red]"
 
         # Format hybrid final percentage
-        if multi_trial and k > 1:
+        if hybrid_mean is None:
+            # Every trial of this test failed in the judge: there is no
+            # hybrid score to show, and 0% would be a fabricated verdict.
+            final_text = "N/A"
+            trials_text = str(len(test_rows)) if multi_trial else None
+        elif multi_trial and k > 1:
             hp = hybrid_mean * 100
             sp = hybrid_std * 100
             if hp == 100.0:
@@ -123,7 +180,7 @@ def _render_runtime_details_table(console: Console, header_text: str, rows: Sequ
                 final_text = f"0±{sp:.2f}%"
             else:
                 final_text = f"{hp:.2f}±{sp:.2f}%"
-            trials_text = str(k)
+            trials_text = str(len(test_rows))
         else:
             hp = hybrid_mean * 100
             if hp == 100.0:
@@ -190,6 +247,31 @@ def _render_runtime_details_table(console: Console, header_text: str, rows: Sequ
             width=80,
         )
     )
+
+    # ── Judge Errors panel (scoreless rows, never a 0% score) ─────────────────
+    if judge_errors_by_test:
+        etable = Table(
+            header_style="bold yellow",
+            padding=(0, 1),
+            show_lines=True,
+            title="[bold yellow]Judge Errors[/bold yellow]",
+        )
+        etable.add_column("Test", style="yellow", width=16)
+        etable.add_column("Error", style="red", width=40, overflow="fold")
+        etable.add_column("Attempts", style="dim", justify="right", width=8)
+
+        for test_id, (kind, attempts) in judge_errors_by_test.items():
+            etable.add_row(str(test_id), str(kind), str(attempts) if attempts is not None else "N/A")
+
+        console.print(
+            Panel(
+                etable,
+                style="yellow",
+                padding=(1, 0, 0, 0),
+                expand=False,
+                width=80,
+            )
+        )
 
     # ── Failed Checks panel (wraps freely, never crushes scores) ───────────────
     if failed_checks_by_test:

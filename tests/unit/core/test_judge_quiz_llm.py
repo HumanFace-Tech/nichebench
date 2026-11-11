@@ -28,6 +28,8 @@ import subprocess
 import sys
 from typing import Any, Dict, List, Optional
 
+import pytest
+
 from nichebench.core.datamodel import TestCaseSpec
 from nichebench.execution.dispatch import execute_test
 from nichebench.execution.runners.judge import JudgeRunner
@@ -284,6 +286,131 @@ def test_dispatch_judge_error_sets_error_kind_and_fails(tmp_path) -> None:
     assert summary["avg_score"] is None
 
 
+def test_dispatch_judge_error_serializes_null_scores(tmp_path) -> None:
+    """A judge failure must never serialize a fabricated zero.
+
+    ``to_dict()`` keeps the error metadata (``error_kind``, ``judge_attempts``)
+    and reports null scores, so the row can never be mistaken for a scored
+    model failure.
+    """
+    result = execute_test(
+        test_case=_make_quiz_case(),
+        category="quiz",
+        framework="drupal",
+        mut_model_str="openai/gpt-4o",
+        judge_model_str="openai/gpt-4o",
+        mut_runner=_FakeMutRunner("B"),
+        judge_runner=_make_runner("[Error: provider down]"),
+        system_prompt=None,
+        judge_system_prompt=None,
+    )
+
+    payload = result.to_dict()
+
+    assert payload["judge_score"] is None
+    assert payload["final_score"] is None
+    assert payload["deterministic_score"] is None
+    assert payload["pass"] is False
+    assert payload["error_kind"] == "judge_unavailable"
+    assert payload["judge_attempts"] == 3
+
+    # The row is counted as a judge error and excluded from scoring.
+    summary_path = tmp_path / "summary.json"
+    update_summary(
+        results=[result],
+        summary_path=summary_path,
+        category="quiz",
+        framework="drupal",
+        mut_model_str="openai/gpt-4o",
+        judge_model_str="openai/gpt-4o",
+        mut_runner_model_config={},
+        judge_runner_model_config={},
+        profile=None,
+        eval_config={},
+    )
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    assert summary["judge_errors"] == 1
+    assert summary["config_errors"] == 0
+    assert summary["total"] == 0
+    assert summary["avg_score"] is None
+
+
+# ---------------------------------------------------------------------------
+# Explicit abstention — a scored zero, not a judge error
+# ---------------------------------------------------------------------------
+
+_ABSTENTION_VERDICT = json.dumps(
+    {"pass": False, "selected": None, "score": 0, "explanation": "The answer is ambiguous"}
+)
+
+
+def test_explicit_abstention_is_scored_zero() -> None:
+    """``"selected": null`` with a verdict and an explanation is a model failure."""
+    client = _ScriptedClient(_ABSTENTION_VERDICT)
+    runner = _make_runner(judge=LiteLLMJudge(client=client, sleeper=lambda _: None))
+
+    output, passed = runner.evaluate_test(_make_quiz_case(), "quiz", "question text", "B", None)
+
+    assert passed is False
+    assert output["status"] == "abstained"
+    assert output["selected"] is None
+    assert output["pass"] is False
+    assert output["score"] == 0.0
+    assert output["overall_score"] == 0.0
+    assert output["explanation"] == "The answer is ambiguous"
+    assert output["judge_pass"] is False
+    assert output["attempts"] == 1
+    # No error kind: an abstention is a scored model failure.
+    assert "error_kind" not in output
+    # Never retried.
+    assert client.calls == 1
+
+
+def test_abstention_is_included_in_the_quiz_totals(tmp_path) -> None:
+    """An abstention counts in the denominator — it is not excluded."""
+    result = execute_test(
+        test_case=_make_quiz_case(),
+        category="quiz",
+        framework="drupal",
+        mut_model_str="openai/gpt-4o",
+        judge_model_str="openai/gpt-4o",
+        mut_runner=_FakeMutRunner("B"),
+        judge_runner=_make_runner(_ABSTENTION_VERDICT),
+        system_prompt=None,
+        judge_system_prompt=None,
+    )
+
+    assert result.passed is False
+    assert result.error_kind is None
+
+    payload = result.to_dict()
+    assert payload["judge_score"] == 0.0
+    assert payload["final_score"] == 0.0
+    assert payload["deterministic_score"] is None
+
+    summary_path = tmp_path / "summary.json"
+    update_summary(
+        results=[result],
+        summary_path=summary_path,
+        category="quiz",
+        framework="drupal",
+        mut_model_str="openai/gpt-4o",
+        judge_model_str="openai/gpt-4o",
+        mut_runner_model_config={},
+        judge_runner_model_config={},
+        profile=None,
+        eval_config={},
+    )
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    assert summary["judge_errors"] == 0
+    assert summary["config_errors"] == 0
+    assert summary["total"] == 1
+    assert summary["failed"] == 1
+    assert summary["avg_score"] == pytest.approx(0.0)
+
+
 # ---------------------------------------------------------------------------
 # Malformed quiz tasks fail closed — without any judge call
 # ---------------------------------------------------------------------------
@@ -299,6 +426,7 @@ def _assert_invalid_task(result: Dict[str, Any]) -> None:
         "explanation": "Quiz task is missing choices",
         "method": "validation",
         "parse_reason": "invalid_task",
+        "error_kind": "config_error",
     }
 
 
@@ -312,6 +440,7 @@ def _assert_invalid_gold(result: Dict[str, Any]) -> None:
         "explanation": "Quiz task is missing or invalid correct_choice",
         "method": "validation",
         "parse_reason": "invalid_gold",
+        "error_kind": "config_error",
     }
 
 
@@ -341,7 +470,9 @@ def test_quiz_with_blank_correct_choice_is_invalid_gold() -> None:
 
 
 def test_quiz_with_non_string_correct_choice_is_invalid_gold() -> None:
-    _assert_invalid_gold(_evaluate_with_exploding_judge("B", _make_quiz_case(correct_choice=2)))  # type: ignore[arg-type]
+    _assert_invalid_gold(
+        _evaluate_with_exploding_judge("B", _make_quiz_case(correct_choice=2))  # type: ignore[arg-type]
+    )
 
 
 def test_quiz_with_single_choice_is_invalid_task() -> None:
@@ -378,6 +509,120 @@ def test_quiz_with_lowercase_gold_is_valid() -> None:
     assert result["passed"] is True
     assert result["output"]["method"] == "llm"
     assert result["output"]["parse_reason"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Invalid quiz task data is a config error — never a model failure
+# ---------------------------------------------------------------------------
+
+
+def _dispatch_invalid_quiz(test_case: TestCaseSpec, tmp_path) -> Dict[str, Any]:
+    """Dispatch an invalid quiz task and return the written summary."""
+    result = execute_test(
+        test_case=test_case,
+        category="quiz",
+        framework="drupal",
+        mut_model_str="openai/gpt-4o",
+        judge_model_str="openai/gpt-4o",
+        mut_runner=_FakeMutRunner("B"),
+        judge_runner=_make_runner(judge=_ExplodingJudge()),
+        system_prompt=None,
+        judge_system_prompt=None,
+    )
+
+    assert result.passed is False
+    assert result.error_kind == "config_error"
+
+    payload = result.to_dict()
+    # No fabricated zero: a config error is not a model result.
+    assert payload["judge_score"] is None
+    assert payload["final_score"] is None
+    assert payload["deterministic_score"] is None
+    assert payload["error_kind"] == "config_error"
+    assert payload["pass"] is False
+    # The validation verdict keeps its method and parse reason.
+    assert payload["judge_output"]["method"] == "validation"
+    assert payload["judge_output"]["parse_reason"] in ("invalid_task", "invalid_gold")
+
+    summary_path = tmp_path / "summary.json"
+    update_summary(
+        results=[result],
+        summary_path=summary_path,
+        category="quiz",
+        framework="drupal",
+        mut_model_str="openai/gpt-4o",
+        judge_model_str="openai/gpt-4o",
+        mut_runner_model_config={},
+        judge_runner_model_config={},
+        profile=None,
+        eval_config={},
+    )
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    assert summary["config_errors"] == 1
+    assert summary["judge_errors"] == 0
+    assert summary["attempted_total"] == 1
+    assert summary["total"] == 0
+    assert summary["passed"] == 0
+    assert summary["failed"] == 0
+    assert summary["avg_score"] is None
+    return summary
+
+
+def test_invalid_gold_quiz_is_counted_as_a_config_error(tmp_path) -> None:
+    """A missing gold is a data defect: no judge call, no score."""
+    _dispatch_invalid_quiz(_make_quiz_case(correct_choice=None), tmp_path)
+
+
+def test_missing_choices_quiz_is_counted_as_a_config_error(tmp_path) -> None:
+    """Missing choices are a data defect: no judge call, no score."""
+    _dispatch_invalid_quiz(_make_quiz_case(choices=[]), tmp_path)
+
+
+def test_invalid_quiz_task_does_not_drag_the_pass_rate(tmp_path) -> None:
+    """A config error never lowers the average of the scored quiz rows."""
+    good = execute_test(
+        test_case=_make_quiz_case(),
+        category="quiz",
+        framework="drupal",
+        mut_model_str="openai/gpt-4o",
+        judge_model_str="openai/gpt-4o",
+        mut_runner=_FakeMutRunner("B"),
+        judge_runner=_make_runner(),
+        system_prompt=None,
+        judge_system_prompt=None,
+    )
+    broken = execute_test(
+        test_case=_make_quiz_case(correct_choice=None),
+        category="quiz",
+        framework="drupal",
+        mut_model_str="openai/gpt-4o",
+        judge_model_str="openai/gpt-4o",
+        mut_runner=_FakeMutRunner("B"),
+        judge_runner=_make_runner(judge=_ExplodingJudge()),
+        system_prompt=None,
+        judge_system_prompt=None,
+    )
+
+    summary_path = tmp_path / "summary.json"
+    update_summary(
+        results=[good, broken],
+        summary_path=summary_path,
+        category="quiz",
+        framework="drupal",
+        mut_model_str="openai/gpt-4o",
+        judge_model_str="openai/gpt-4o",
+        mut_runner_model_config={},
+        judge_runner_model_config={},
+        profile=None,
+        eval_config={},
+    )
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    assert summary["config_errors"] == 1
+    assert summary["total"] == 1
+    assert summary["passed"] == 1
+    assert summary["avg_score"] == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------

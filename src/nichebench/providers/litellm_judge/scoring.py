@@ -11,8 +11,12 @@ exclusively by ``judge.py`` inside the ``score_runtime`` method.
 
 Scoring contract
 ================
-* Criteria are matched to checklist items by ``criterion_id`` (primary)
-  or by position (fallback, when fewer than half the IDs are recognised).
+* Every manifest criterion is scored **at most once**: each checklist item
+  resolves to a single criterion — the first not-yet-used one whose
+  ``criterion_id`` matches the item id, falling back to the criterion in
+  the same position when that entry does not belong to another manifest
+  item.  Duplicate or extra criteria are ignored and can never add weight
+  twice (a repeated ``criterion_id`` cannot inflate the score).
 * Negative weights are clamped to ``0.0`` so a malformed manifest cannot
   produce a negative ``overall_score``.  The final result is clamped to
   ``[0.0, 1.0]``.
@@ -46,8 +50,21 @@ def _compute_weighted_score(
 ) -> float:
     """Compute weighted score from judge criteria, matched by criterion_id.
 
-    Falls back to positional matching if fewer than half of criteria IDs are
-    recognised. Weights are normalised to sum to 1.0 before scoring.
+    Every manifest criterion is scored **at most once**.  Each checklist
+    item resolves to a single criterion: the first not-yet-used criterion
+    whose ``criterion_id`` equals the item id, falling back to the
+    criterion in the same position when that entry does not carry an id
+    that belongs to another manifest item.  Duplicate and extra criteria
+    are ignored, so a repeated ``criterion_id`` never adds weight twice.
+
+    Weights are normalised to sum to 1.0 before scoring.
+
+    The helper is tolerant of malformed input: a checklist entry that is not
+    a mapping is ignored (it contributes no weight), a criterion that is not
+    a mapping is never matched, and missing ``id`` / ``weight`` / ``pass`` keys
+    fall back to their documented defaults.  Malformed *scored* criteria are
+    already rejected at the judge boundary — this tolerance only keeps a
+    malformed verdict from raising instead of being scored.
 
     Args:
         criteria: list of criterion dicts returned by the judge LLM, each
@@ -58,41 +75,54 @@ def _compute_weighted_score(
     Returns:
         A float in ``[0.0, 1.0]``.
     """
-    weight_by_id = {str(item.get("id", "")): _safe_weight(item.get("weight", 1.0)) for item in checklist_items}
+    weight_by_id = {
+        str(item.get("id", "")): _safe_weight(item.get("weight", 1.0))
+        for item in checklist_items
+        if isinstance(item, dict)
+    }
     total_weight = sum(weight_by_id.values())
     if total_weight <= 0 or not criteria:
         return 0.0
 
-    # Try ID-based matching first
-    matched_ids: set[str] = set()
     score = 0.0
-    for c in criteria:
-        if not isinstance(c, dict):
-            continue
-        cid = str(c.get("criterion_id", ""))
-        if cid in weight_by_id:
-            matched_ids.add(cid)
-            pass_val = c.get("pass", False)
-            if pass_val is True:
-                score += weight_by_id[cid]
-            elif pass_val == "partial":
-                score += weight_by_id[cid] * 0.5
+    used: set[int] = set()
 
-    # If we matched at least half the items by ID, trust the ID-based result
-    if len(matched_ids) >= len(checklist_items) / 2:
-        return max(0.0, min(1.0, score / total_weight))
-
-    # Positional fallback: assume criteria are in the same order as checklist_items
-    score = 0.0
-    for i, c in enumerate(criteria):
-        if i >= len(checklist_items):
-            break
-        if not isinstance(c, dict):
+    for position, item in enumerate(checklist_items):
+        if not isinstance(item, dict):
             continue
-        weight = _safe_weight(checklist_items[i].get("weight", 1.0))
-        pass_val = c.get("pass", False)
+        weight = _safe_weight(item.get("weight", 1.0))
+        item_id = str(item.get("id", ""))
+
+        # Primary: the first not-yet-used criterion carrying this id.
+        chosen: int | None = None
+        for index, candidate in enumerate(criteria):
+            if index in used or not isinstance(candidate, dict):
+                continue
+            if str(candidate.get("criterion_id", "")) == item_id:
+                chosen = index
+                break
+
+        # Fallback: the criterion at the same position, but only when it
+        # does not belong to another manifest item — a duplicate criterion
+        # for a different id is never credited here.
+        if chosen is None and position < len(criteria):
+            candidate = criteria[position]
+            if (
+                position not in used
+                and isinstance(candidate, dict)
+                and str(candidate.get("criterion_id", "")) not in weight_by_id
+            ):
+                chosen = position
+
+        if chosen is None:
+            continue
+        used.add(chosen)
+
+        criterion = criteria[chosen]
+        pass_val = criterion.get("pass", False)
         if pass_val is True:
             score += weight
         elif pass_val == "partial":
             score += weight * 0.5
+
     return max(0.0, min(1.0, score / total_weight))

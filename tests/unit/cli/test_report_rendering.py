@@ -11,6 +11,7 @@ aggregation (see ``summary.normalize_score``).
 
 import io
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -221,6 +222,73 @@ class TestRenderCodeDetailsTableSafeScoring:
             _code_row({"overall_score": True}, test_id="bool_true"),
             _code_row({}, test_id="missing"),
         ]
+        _render_code_details_table(console, "header", rows, "code_generation")
+
+
+class TestRenderCodeDetailsMalformedCriteria:
+    """Legacy result files may carry criterion entries that are not mappings.
+
+    The renderer must not call ``.get()`` on them (crash) and must not turn
+    them into a fabricated score.
+    """
+
+    def test_malformed_criterion_entry_does_not_raise(self):
+        console, _ = _capture_console()
+        rows = [_code_row({"overall_score": 0.2, "criteria": ["bad"], "summary": "judge said"})]
+
+        _render_code_details_table(console, "header", rows, "code_generation")
+
+    @pytest.mark.parametrize("entry", ["bad", 1, None, 1.5, True])
+    def test_malformed_criterion_entry_renders_a_placeholder(self, entry):
+        console, buf = _capture_console()
+        rows = [_code_row({"overall_score": 0.2, "criteria": [entry], "summary": "judge said"})]
+
+        _render_code_details_table(console, "header", rows, "code_generation")
+
+        output = buf.getvalue()
+        assert "t1" in output
+        assert "malformed" in output
+
+    def test_malformed_criterion_does_not_fabricate_a_score(self):
+        """A malformed criterion is not counted as a passed or failed criterion."""
+        console, buf = _capture_console()
+        rows = [_code_row({"overall_score": 0.2, "criteria": ["bad"], "summary": "judge said"})]
+
+        _render_code_details_table(console, "header", rows, "code_generation")
+
+        output = buf.getvalue()
+        # No criterion is reported as passed or failed (the "✅" in the
+        # column header is not a criterion count).
+        assert "✅ 1" not in output
+        assert "❌ 1" not in output
+        # The score shown is the one the judge reported (20%), not a value
+        # derived from the malformed criterion.
+        assert "20%" in output
+
+    def test_mixed_criteria_render_without_error(self):
+        console, buf = _capture_console()
+        rows = [
+            _code_row(
+                {
+                    "overall_score": 0.5,
+                    "criteria": [{"pass": True}, "bad", {"pass": False}],
+                    "summary": "mixed",
+                },
+                test_id="mixed_row",
+            )
+        ]
+
+        _render_code_details_table(console, "header", rows, "code_generation")
+
+        output = buf.getvalue()
+        assert "mixed_row" in output
+        assert "malformed" in output
+        assert "50%" in output
+
+    def test_non_list_criteria_does_not_raise(self):
+        console, _ = _capture_console()
+        rows = [_code_row({"overall_score": 0.2, "criteria": "not a list", "summary": "judge said"})]
+
         _render_code_details_table(console, "header", rows, "code_generation")
 
 
@@ -977,6 +1045,171 @@ class TestRenderRuntimeDetailsTableSafeScoring:
             ),
         ]
         _render_runtime_details_table(console, "header", rows)
+
+
+# ─── Tests for runtime judge errors in the detail table ───────────────────────
+
+
+def _runtime_error_row(
+    *,
+    test_id: str = "rt1",
+    kind: str = "judge_unavailable",
+    attempts: int = 3,
+) -> dict:
+    """Build a runtime row whose judge never produced a usable verdict."""
+    return _runtime_row(
+        {
+            "error_kind": kind,
+            "error": "[Error: HTTP 429]",
+            "attempts": attempts,
+            "deterministic_score": 0.5,
+            "deterministic_gate_passed": True,
+            "judge_score": None,
+            "hybrid_score": None,
+            "final_score": None,
+            "overall_score": None,
+            "checks": [{"name": "module exists", "passed": True, "message": "found"}],
+        },
+        test_id=test_id,
+        passed=False,
+    )
+
+
+def _has_zero_percent(output: str) -> bool:
+    """Whether a whole cell renders as ``0.00%`` (``50.00%`` does not count)."""
+    return re.search(r"(?<![\d.])0\.00%", output) is not None
+
+
+class TestRenderRuntimeJudgeErrors:
+    """A runtime row whose judge failed renders as an error, never as a 0% score."""
+
+    def test_judge_error_row_shows_error_not_a_score(self):
+        console, buf = _capture_console()
+        _render_runtime_details_table(console, "header", [_runtime_error_row()])
+
+        output = buf.getvalue()
+        assert "ERROR" in output
+        assert "N/A" in output
+        # No percentage is invented for a scoreless row.
+        assert not _has_zero_percent(output)
+        # The error kind and the attempt count are reported.
+        assert "judge_unavailable" in output
+        assert re.search(r"judge_unavailable[^0-9]*3", output)
+
+    def test_config_error_row_is_reported_too(self):
+        console, buf = _capture_console()
+        _render_runtime_details_table(console, "header", [_runtime_error_row(kind="config_error", attempts=1)])
+
+        output = buf.getvalue()
+        assert "ERROR" in output
+        assert "config_error" in output
+        assert not _has_zero_percent(output)
+
+    def test_multi_trial_mean_ignores_the_error_row(self):
+        """A scoreless trial is missing, not zero: the mean is over scored trials."""
+        console, buf = _capture_console()
+        rows = [
+            _runtime_row(
+                {
+                    "hybrid_score": 0.8,
+                    "judge_score": 0.9,
+                    "deterministic_score": 1.0,
+                    "deterministic_gate_passed": True,
+                    "checks": [],
+                },
+                test_id="rt1",
+            ),
+            _runtime_error_row(test_id="rt1"),
+        ]
+
+        _render_runtime_details_table(console, "header", rows)
+
+        output = buf.getvalue()
+        # The error trial contributes nothing: the mean stays 80%, not 40%.
+        assert "80.00%" in output
+        assert "40.00%" not in output
+        # The failed trial is still reported, with its kind and attempts.
+        assert "judge_unavailable" in output
+        assert re.search(r"judge_unavailable[^0-9]*3", output)
+
+
+# ─── Tests for runtime judge errors in the completion report ──────────────────
+
+
+def _write_runtime_summary(tmp_path: Path, **overrides) -> Path:
+    """Write a runtime summary.json carrying one judge-error row."""
+    summary = {
+        "framework": "test",
+        "category": "runtime",
+        "model": "test/mut",
+        "judge": "test/judge",
+        "total": 0,
+        "attempted_total": 1,
+        "judge_errors": 1,
+        "config_errors": 0,
+        "passed": 0,
+        "partial": 0,
+        "failed": 0,
+        "avg_score": None,
+    }
+    summary.update(overrides)
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    return summary_path
+
+
+class TestRuntimeCompletionJudgeErrors:
+    """Runtime judge/config error rows are infrastructure failures, not model failures."""
+
+    def test_judge_error_row_is_not_counted_as_a_failed_model_test(self, tmp_path: Path, capsys, monkeypatch):
+        monkeypatch.setenv("COLUMNS", "200")
+        summary_path = _write_runtime_summary(tmp_path)
+        details_path = tmp_path / "details.jsonl"
+        details_path.write_text(json.dumps(_runtime_error_row()) + "\n", encoding="utf-8")
+
+        render_run_completion_report(summary_path, details_path)
+
+        output = capsys.readouterr().out
+        # Not a failed model test, but the infrastructure failure is labelled.
+        assert "❌ Failed: 0" in output
+        assert "⚠️ Judge Errors: 1" in output
+        assert "Judge Errors" in output
+        assert "Attempted Total" in output
+        # An unscorable run renders honestly instead of a fabricated 0%.
+        assert "n/a" in output
+
+    def test_a_judge_error_row_renders_as_an_error_in_the_detail_table(self, tmp_path: Path, capsys, monkeypatch):
+        monkeypatch.setenv("COLUMNS", "200")
+        summary_path = _write_runtime_summary(tmp_path)
+        details_path = tmp_path / "details.jsonl"
+        details_path.write_text(json.dumps(_runtime_error_row()) + "\n", encoding="utf-8")
+
+        render_run_completion_report(summary_path, details_path)
+
+        output = capsys.readouterr().out
+        assert "ERROR" in output
+        assert "N/A" in output
+        assert "judge_unavailable" in output
+        assert not _has_zero_percent(output)
+
+    def test_a_runtime_summary_without_errors_keeps_its_columns(self, tmp_path: Path, capsys, monkeypatch):
+        monkeypatch.setenv("COLUMNS", "200")
+        summary_path = _write_runtime_summary(
+            tmp_path,
+            total=1,
+            attempted_total=1,
+            judge_errors=0,
+            passed=1,
+            failed=0,
+            avg_score=0.9,
+        )
+
+        render_run_completion_report(summary_path)
+
+        output = capsys.readouterr().out
+        assert "Attempted Total" in output
+        assert "Judge Errors" in output
+        assert "90%" in output
 
 
 # ─── Tests for _render_quiz_details_table ─────────────────────────────────────

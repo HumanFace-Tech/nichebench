@@ -212,24 +212,82 @@ def first_failed_stage(trace: Dict[str, Any]) -> Optional[str]:
 
 # Runtime failures caused by the harness/environment rather than by the model
 # under test.  These must not be scored as model failures.
+#
+# ``model_protocol_compatibility`` is deliberately absent: the model itself
+# does not speak the expected protocol, so that failure belongs to the model
+# and stays in the model score.
 _INFRASTRUCTURE_FAILURE_CLASSES = frozenset({"drupal_environment", "network_connectivity"})
+
+# Stages that run before the model acts.  A failure in one of them is
+# harness-side by construction — the model never produced work — so it must
+# not be scored as a model failure.  ``deterministic_checks`` is deliberately
+# absent: a failed critical check is a model failure and stays scored.
+_INFRASTRUCTURE_SETUP_STAGES = frozenset(
+    {
+        "config_resolution",
+        "workspace_setup",
+        "environment_bootstrap",
+        "image_build",
+        "artifact_finalization",
+    }
+)
+
+# Substrings that identify a known harness/configuration problem in the
+# error text (missing image, missing API key, unusable Docker daemon, ...).
 _INFRASTRUCTURE_ERROR_MARKERS = (
     "unrecognized flag",
     "unknown flag",
+    "runtime_container_image must be configured",
+    "cannot connect to the docker daemon",
+    "no such file or directory: 'docker'",
+    "docker: not found",
+    "api key missing",
+    "missing api key",
+    "pull access denied",
+    "unauthorized",
+    "image not found",
+    "no such image",
     "failed to build",
     "error getting credentials",
-    "no such image",
     "permission denied",
 )
 
 
-def is_infrastructure_failure(failure_class: str, error: Optional[str]) -> bool:
+def is_infrastructure_failure(
+    failure_class: str,
+    error: Optional[str],
+    failed_stage: Optional[str] = None,
+) -> bool:
     """Return True when a runtime failure is harness/environment infrastructure.
 
     A model-quality score must not be dragged down by a broken cage image, a
     missing Docker credential, or an unsupported CLI flag.
+
+    Args:
+        failure_class: The classified failure class (see
+            :func:`classify_runtime_failure`).
+        error: The raw error text of the failure.
+        failed_stage: Optional name of the runtime stage that failed.  A
+            failure in a setup stage (see ``_INFRASTRUCTURE_SETUP_STAGES``) is
+            harness-side by construction, even when the error text carries no
+            known marker.
+
+    Returns:
+        True when the failure must be excluded from model-quality scores.
     """
-    if failure_class in _INFRASTRUCTURE_FAILURE_CLASSES:
+    stage = (failed_stage or "").strip().lower()
+    if stage in _INFRASTRUCTURE_SETUP_STAGES:
+        # Setup stages run before the model acts; nothing the model did can
+        # have caused the failure.
         return True
     text = (error or "").lower()
-    return any(marker in text for marker in _INFRASTRUCTURE_ERROR_MARKERS)
+    if any(marker in text for marker in _INFRASTRUCTURE_ERROR_MARKERS):
+        # A known harness/configuration marker is decisive: a broken image, a
+        # missing credential or an unsupported CLI is never a model-quality
+        # problem.  The marker wins over the (loose) model-protocol heuristic,
+        # which also fires on ordinary authentication errors.
+        return True
+    # ``model_protocol_compatibility`` is not part of the infrastructure class
+    # set: a model that does not speak the expected protocol is a model-side
+    # failure and stays in the model score.
+    return failure_class in _INFRASTRUCTURE_FAILURE_CLASSES

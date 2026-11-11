@@ -2,8 +2,10 @@
 
 Covers ``JudgeRunner._evaluate_with_judge`` and the dispatch plumbing:
 
-* a no-code MUT response never reaches the judge and returns a hard-fail
+* an empty MUT response never reaches the judge and returns a hard-fail
   verdict (``error_kind`` = check name, all scores ``0.0``);
+* a non-empty but code-free response (prose) is advisory — it still
+  reaches the judge;
 * a valid response still calls the judge and carries the (advisory)
   ``sanity_findings`` on the judge output;
 * ``evaluation.code_sanity_checks: false`` skips the layer entirely;
@@ -28,6 +30,12 @@ _JUDGE_OUTPUT: Dict[str, Any] = {
     "raw": "",
 }
 
+# Nothing at all to judge — the only ``sanity_no_code`` hard failure
+# besides truncation.
+_EMPTY_RESPONSE = ""
+
+# Non-empty but with no fence, no marker and no code shape: advisory, so
+# it still reaches the judge.
 _NO_CODE_RESPONSE = "I'm afraid I cannot help with that request."
 
 # Structurally clean: declared path + fenced block → zero findings, so the
@@ -42,6 +50,9 @@ _VALID_RESPONSE = (
 
 # Code without a declared path → exactly one advisory finding.
 _ADVISORY_RESPONSE = "Here is the code:\n\n```python\nprint('ok')\n```"
+
+# Valid code that arrives without a fence and without a marker.
+_UNFENCED_CODE_RESPONSE = "<?php\nfunction answer(): int { return 42; }\n"
 
 
 class _FakeJudge:
@@ -124,11 +135,11 @@ def _execute(mut_output: str, judge: _FakeJudge) -> Any:
     )
 
 
-def test_no_code_response_does_not_call_the_judge() -> None:
+def test_empty_response_does_not_call_the_judge() -> None:
     judge = _FakeJudge()
 
     output, passed = _make_runner(judge).evaluate_test(
-        _make_case(), "code_generation", "the prompt", _NO_CODE_RESPONSE, None
+        _make_case(), "code_generation", "the prompt", _EMPTY_RESPONSE, None
     )
 
     assert judge.calls == []
@@ -141,6 +152,23 @@ def test_no_code_response_does_not_call_the_judge() -> None:
     assert all(finding["severity"] == "hard" for finding in output["sanity_findings"])
 
 
+def test_prose_response_reaches_the_judge_with_an_advisory_finding() -> None:
+    """Code-free but non-empty output is advisory — never an automatic zero."""
+    judge = _FakeJudge()
+
+    output, passed = _make_runner(judge).evaluate_test(
+        _make_case(), "code_generation", "the prompt", _NO_CODE_RESPONSE, None
+    )
+
+    assert len(judge.calls) == 1
+    assert passed is True
+    assert output["overall_score"] == 0.9
+
+    findings = output["sanity_findings"]
+    assert [finding["check"] for finding in findings] == ["sanity_no_code"]
+    assert findings[0]["severity"] == "advisory"
+
+
 def test_truncated_response_does_not_call_the_judge() -> None:
     judge = _FakeJudge()
 
@@ -151,6 +179,23 @@ def test_truncated_response_does_not_call_the_judge() -> None:
     assert judge.calls == []
     assert passed is False
     assert output["error_kind"] == "sanity_truncated"
+
+
+def test_unfenced_code_response_still_calls_the_judge() -> None:
+    """Unfenced code is advisory — the judge scores it like any other response."""
+    judge = _FakeJudge()
+
+    output, passed = _make_runner(judge).evaluate_test(
+        _make_case(), "code_generation", "the prompt", _UNFENCED_CODE_RESPONSE, None
+    )
+
+    assert len(judge.calls) == 1
+    assert passed is True
+    assert output["overall_score"] == 0.9
+
+    findings = output["sanity_findings"]
+    assert [finding["check"] for finding in findings] == ["sanity_unfenced_code"]
+    assert findings[0]["severity"] == "advisory"
 
 
 def test_valid_response_calls_the_judge_and_attaches_advisory_findings() -> None:
@@ -232,7 +277,7 @@ def test_effective_evaluation_config_enables_the_sanity_layer(monkeypatch: pytes
     runner.evaluation_config = {"code_sanity_checks": True}
 
     output, _ = runner.evaluate_test(
-        _make_case(), "code_generation", "the prompt", _NO_CODE_RESPONSE, None
+        _make_case(), "code_generation", "the prompt", _EMPTY_RESPONSE, None
     )
 
     assert judge.calls == []
@@ -240,13 +285,13 @@ def test_effective_evaluation_config_enables_the_sanity_layer(monkeypatch: pytes
 
 
 def test_hard_sanity_failure_reaches_the_result() -> None:
-    result = _execute(_NO_CODE_RESPONSE, _FakeJudge())
+    result = _execute(_EMPTY_RESPONSE, _FakeJudge())
 
     assert result.passed is False
     assert result.error_kind == "sanity_no_code"
     assert result.judge_output["overall_score"] == 0.0
     # The MUT output stays untouched for forensics.
-    assert result.mut_output == _NO_CODE_RESPONSE
+    assert result.mut_output == _EMPTY_RESPONSE
 
     payload = result.to_dict()
     assert payload["error_kind"] == "sanity_no_code"

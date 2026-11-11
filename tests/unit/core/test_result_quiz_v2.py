@@ -152,6 +152,81 @@ class TestQuizToDict:
         assert payload["judge_score"] == 0.0
 
 
+class TestQuizErrorRowsCarryNullScores:
+    """A judge or config failure must never serialize a fabricated zero."""
+
+    @staticmethod
+    def _make_error_result(error_kind: str, judge_output: Dict[str, Any]) -> TestResult:
+        result = _make_quiz_result(judge_output=judge_output, passed=False)
+        result.error_kind = error_kind
+        result.judge_attempts = 3
+        return result
+
+    def test_judge_error_row_has_null_scores(self):
+        result = self._make_error_result(
+            "judge_unavailable",
+            {
+                "error_kind": "judge_unavailable",
+                "error": "[Error: provider down]",
+                "attempts": 3,
+                "score": None,
+                "overall_score": None,
+            },
+        )
+        payload = result.to_dict()
+
+        assert payload["judge_score"] is None
+        assert payload["final_score"] is None
+        assert payload["deterministic_score"] is None
+        assert payload["pass"] is False
+        assert payload["error_kind"] == "judge_unavailable"
+        assert payload["judge_attempts"] == 3
+
+    def test_config_error_row_has_null_scores(self):
+        result = self._make_error_result(
+            "config_error",
+            {
+                "pass": False,
+                "selected": None,
+                "score": 0.0,
+                "explanation": "Quiz task is missing or invalid correct_choice",
+                "method": "validation",
+                "parse_reason": "invalid_gold",
+                "error_kind": "config_error",
+            },
+        )
+        payload = result.to_dict()
+
+        assert payload["judge_score"] is None
+        assert payload["final_score"] is None
+        assert payload["deterministic_score"] is None
+        assert payload["pass"] is False
+        assert payload["error_kind"] == "config_error"
+        # The validation verdict keeps its parse reason.
+        assert payload["parse_reason"] == "invalid_gold"
+
+    def test_non_dict_judge_output_with_error_kind_has_null_scores(self):
+        result = _make_quiz_result(judge_output="oops", passed=False)
+        result.error_kind = "judge_unavailable"
+        payload = result.to_dict()
+
+        assert payload["judge_score"] is None
+        assert payload["final_score"] is None
+        assert payload["deterministic_score"] is None
+        assert payload["pass"] is False
+
+    def test_successful_quiz_row_keeps_binary_scores(self):
+        result = _make_quiz_result(
+            judge_output={"pass": True, "selected": "B", "score": 1.0, "parse_reason": "ok"},
+            passed=True,
+        )
+        payload = result.to_dict()
+
+        assert payload["judge_score"] == 1.0
+        assert payload["final_score"] == 1.0
+        assert payload["deterministic_score"] is None
+
+
 class TestClassicToDictUnchanged:
     """Code / bug / runtime serialization must not change."""
 

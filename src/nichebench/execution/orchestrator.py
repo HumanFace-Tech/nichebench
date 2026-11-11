@@ -164,7 +164,7 @@ class TestExecutor(RuntimeExecutionMixin):
     def _load_system_prompt(self) -> Optional[str]:
         """Load MUT system prompt for the category."""
         prompt_path = (
-            Path(__file__).resolve().parents[3]
+            Path(__file__).resolve().parents[1]
             / "frameworks"
             / self.framework
             / "prompts"
@@ -175,7 +175,7 @@ class TestExecutor(RuntimeExecutionMixin):
     def _load_judge_system_prompt(self) -> Optional[str]:
         """Load Judge system prompt for the category."""
         judge_path = (
-            Path(__file__).resolve().parents[3]
+            Path(__file__).resolve().parents[1]
             / "frameworks"
             / self.framework
             / "prompts"

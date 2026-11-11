@@ -1,11 +1,13 @@
 """Structural sanity layer for code generation (C4).
 
 Covers ``nichebench.metrics.sanity``: marker/fence extraction with
-tolerated narration, the two hard findings (no code, truncation), the
-advisory findings (undeclared path, duplicate path, YAML/JSON parse), and
-the best-effort PHP lint (advisory on a syntax error, ``skipped`` when no
-``php`` binary is on the host).  The layer never inspects class names,
-namespaces, or framework semantics.
+tolerated narration, the two hard findings (empty response, truncation), the
+advisory findings (unfenced or uncertain content, undeclared path, duplicate
+path, YAML/JSON parse), and the best-effort PHP lint (advisory on a syntax
+error, ``skipped`` when no ``php`` binary is on the host).  Non-empty
+content without a fence or marker — prose, bare YAML, a single statement, an
+unfenced diff — is never a hard failure.  The layer never inspects class
+names, namespaces, or framework semantics.
 """
 
 from __future__ import annotations
@@ -38,6 +40,28 @@ _VALID_MULTI_FILE = (
     "def helper():\n"
     "    return 42\n"
     "```\n"
+)
+
+# Valid PHP code that arrives without a fence and without a marker.
+_UNFENCED_PHP = "<?php\nfunction answer(): int { return 42; }\n"
+
+# Valid-but-unfenced deliverables that must never auto-zero.
+_UNFENCED_YAML = "name: My Module\ndescription: Provides a helper.\ntype: module\n"
+_UNFENCED_PHP_STATEMENT = "return $result;\n"
+_UNFENCED_DIFF = (
+    "diff --git a/config/install/foo.yaml b/config/install/foo.yaml\n"
+    "--- a/config/install/foo.yaml\n"
+    "+++ b/config/install/foo.yaml\n"
+    "@@ -1 +1 @@\n"
+    "-old\n"
+    "+new\n"
+)
+
+# Prose only — no code-like content at all.
+_PROSE_ONLY = (
+    "I cannot help with that request.\n"
+    "\n"
+    "The task is outside the scope of what I am able to do here.\n"
 )
 
 
@@ -86,8 +110,15 @@ def test_narration_around_blocks_is_tolerated() -> None:
 # ─── Hard findings ────────────────────────────────────────────────────────────
 
 
-def test_no_code_response_is_a_hard_failure() -> None:
-    findings = structural_checks("I cannot help with that request.")
+def test_empty_response_is_a_hard_failure() -> None:
+    findings = structural_checks("   \n\n  \t\n")
+
+    assert _checks(findings) == [("sanity_no_code", "hard")]
+    assert has_hard_failure(findings) is True
+
+
+def test_blank_string_response_is_a_hard_failure() -> None:
+    findings = structural_checks("")
 
     assert _checks(findings) == [("sanity_no_code", "hard")]
     assert has_hard_failure(findings) is True
@@ -122,6 +153,70 @@ def test_code_without_declared_paths_is_advisory() -> None:
     findings = structural_checks("Here you go:\n\n```python\nprint('ok')\n```\n")
 
     assert _checks(findings) == [("sanity_no_declared_files", "advisory")]
+    assert has_hard_failure(findings) is False
+
+
+def test_unfenced_code_is_advisory_not_a_hard_failure() -> None:
+    """Valid code without a fence or marker must reach the judge."""
+    findings = structural_checks(_UNFENCED_PHP)
+
+    assert _checks(findings) == [("sanity_unfenced_code", "advisory")]
+    assert has_hard_failure(findings) is False
+
+
+def test_unfenced_code_with_narration_is_advisory() -> None:
+    """Narration around unfenced code does not change the outcome."""
+    response = "Here is the implementation:\n\n<?php\nfunction answer(): int { return 42; }\n"
+
+    findings = structural_checks(response)
+
+    assert _checks(findings) == [("sanity_unfenced_code", "advisory")]
+    assert has_hard_failure(findings) is False
+
+
+def test_unfenced_python_code_is_advisory() -> None:
+    findings = structural_checks("def solve(values):\n    return sorted(values)\n")
+
+    assert _checks(findings) == [("sanity_unfenced_code", "advisory")]
+    assert has_hard_failure(findings) is False
+
+
+def test_unfenced_yaml_is_not_a_hard_failure() -> None:
+    """A YAML document without a fence or marker reaches the judge."""
+    findings = structural_checks(_UNFENCED_YAML)
+
+    assert has_hard_failure(findings) is False
+    assert _checks(findings) == [("sanity_no_code", "advisory")]
+
+
+def test_unfenced_php_statement_is_not_a_hard_failure() -> None:
+    """A single PHP statement with no open tag must never auto-zero."""
+    findings = structural_checks(_UNFENCED_PHP_STATEMENT)
+
+    assert has_hard_failure(findings) is False
+    assert _checks(findings) == [("sanity_no_code", "advisory")]
+
+
+def test_unfenced_unified_diff_is_not_a_hard_failure() -> None:
+    """A valid unfenced unified diff reaches the judge."""
+    findings = structural_checks(_UNFENCED_DIFF)
+
+    assert has_hard_failure(findings) is False
+    assert _checks(findings) == [("sanity_unfenced_code", "advisory")]
+
+
+def test_prose_only_response_is_advisory_not_hard() -> None:
+    """Uncertain non-empty content is advisory — the judge decides."""
+    findings = structural_checks(_PROSE_ONLY)
+
+    assert _checks(findings) == [("sanity_no_code", "advisory")]
+    assert has_hard_failure(findings) is False
+
+
+def test_single_sentence_response_is_advisory_not_hard() -> None:
+    findings = structural_checks("I cannot help with that request.")
+
+    assert _checks(findings) == [("sanity_no_code", "advisory")]
     assert has_hard_failure(findings) is False
 
 

@@ -38,6 +38,7 @@ from nichebench.execution.diagnostics.trace import (
 )
 from nichebench.execution.result import TestResult
 from nichebench.execution.runtime.scoring import CheckResult
+from nichebench.metrics.types import JUDGE_ERROR_CONFIG
 
 
 def resolve_runtime_config(runtime_config: Dict[str, Any]) -> Tuple[int, bool, str]:
@@ -225,6 +226,30 @@ def stage_deterministic_checks(
     )
 
 
+def judge_error_kind(judge_output: Dict[str, Any]) -> Optional[str]:
+    """Return the judge/config error kind carried by a runtime judge output.
+
+    A judge output that carries an ``error_kind`` of ``judge_*`` (an
+    unreachable or malformed judge) or ``config_error`` (a harness failure)
+    says nothing about the model: the row must not be scored.  Every other
+    output — including one without an ``error_kind`` — is a scored verdict.
+
+    Args:
+        judge_output: Judge output dict from the judge runner.
+
+    Returns:
+        The error kind string, or ``None`` when the output is a real verdict.
+    """
+    if not isinstance(judge_output, dict):
+        return None
+    kind = judge_output.get("error_kind")
+    if not isinstance(kind, str) or not kind:
+        return None
+    if kind.startswith("judge_") or kind == JUDGE_ERROR_CONFIG:
+        return kind
+    return None
+
+
 def run_judge_scoring(
     test_case: TestCaseSpec,
     user_input: str,
@@ -235,6 +260,12 @@ def run_judge_scoring(
     runtime_config: Dict[str, Any],
 ) -> Tuple[Optional[float], Dict[str, Any]]:
     """Run LLM judge scoring with optional multi-sample median.
+
+    A judge failure (unreachable judge, unusable verdict) is *not* a zero
+    score: the stage returns ``(None, output)`` immediately, carrying the
+    ``error_kind`` through, so the caller can exclude the row from scoring
+    instead of coercing it to ``0.0``.  No further samples are spent on a
+    failed judge.
 
     Args:
         test_case: Test case specification
@@ -267,6 +298,12 @@ def run_judge_scoring(
                 judge_system_prompt,
                 runtime_artifacts=runtime_artifacts,
             )
+            error_kind = judge_error_kind(last_judge_output)
+            if error_kind is not None:
+                # The judge produced no usable verdict: report no score and
+                # stop — never coerce the failure into a 0.0 and never spend
+                # the remaining samples on a broken judge.
+                return None, last_judge_output
             sample_scores.append(_coerce_judge_score(last_judge_output))
 
         judge_score = statistics.median(sample_scores)
@@ -404,7 +441,7 @@ def handle_exception(
         failed_critical_check=False,
         failed_stage=failed_stage,
     )
-    if is_infrastructure_failure(failure_info.failure_class, str(exc)):
+    if is_infrastructure_failure(failure_info.failure_class, str(exc), failed_stage=failed_stage):
         # Broken image/CLI/environment: exclude from model-quality averages.
         result.error_kind = "config_error"
         result.judge_output["error_kind"] = "config_error"

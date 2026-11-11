@@ -1,5 +1,6 @@
 """Unit tests for runtime scoring in execute_runtime_test()."""
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -7,7 +8,8 @@ import pytest
 
 from nichebench.core.datamodel import TestCaseSpec
 from nichebench.execution.orchestrator import TestExecutor
-from nichebench.execution.runtime.scoring import CheckResult
+from nichebench.execution.runtime.scoring import CheckResult, HybridScore
+from nichebench.execution.summary import update_summary
 
 
 def _make_executor(runtime_config=None):
@@ -1163,6 +1165,176 @@ def test_watchdog_inactivity_skips_checks_and_records_agent_execution_stalled():
     assert result.judge_output["catastrophic_failure"] is True
     assert result.judge_output.get("failure_code") == "agent.execution_stalled"
     assert "checks.json" not in result.runtime_artifacts
+
+
+# ---------------------------------------------------------------------------
+# Runtime judge failures: an error verdict, never a model score
+# ---------------------------------------------------------------------------
+
+
+def _judge_error_envelope(kind: str = "judge_unavailable") -> dict:
+    """The error envelope JudgeRunner._evaluate_runtime returns on JudgeError."""
+    return {
+        "error_kind": kind,
+        "error": "[Error: HTTP 429]",
+        "attempts": 3,
+        "overall_score": None,
+        "judge_score": None,
+        "hybrid_score": None,
+        "final_score": None,
+        "summary": f"Judge error ({kind}) after 3 attempt(s): judge unavailable",
+    }
+
+
+def _hybrid_side_effect(check_results, judge_score, scoring_config=None):
+    """Mimic RuntimeScorer.compute_hybrid_score with real values."""
+    total = len(check_results)
+    deterministic_score = sum(1 for c in check_results if c.passed) / total if total else 1.0
+    final_score = (
+        (deterministic_score * 0.7) + (judge_score * 0.3) if judge_score is not None else deterministic_score
+    )
+    critical_fail = any(c.is_critical and not c.passed for c in check_results)
+    return HybridScore(
+        deterministic_score=deterministic_score,
+        judge_score=judge_score,
+        final_score=final_score,
+        check_results=check_results,
+        passed=(not critical_fail and final_score >= 0.7),
+    )
+
+
+class TestRuntimeJudgeErrorFlow:
+    """A judge outage or malformed verdict must never become a model score."""
+
+    @staticmethod
+    def _make_test_case() -> TestCaseSpec:
+        return TestCaseSpec(
+            id="runtime_judge_error",
+            type="runtime",
+            raw={
+                "checks": [
+                    {"op": "file_exists", "path": "web/modules/custom/example.module", "label": "module exists"}
+                ],
+                "llm_judge": {"checklist": [{"id": "c1", "question": "Did it work?", "weight": 1.0}]},
+                "scoring": {"deterministic_weight": 0.7, "llm_weight": 0.3, "threshold": 0.7},
+            },
+            prompt="Do the runtime task",
+        )
+
+    @staticmethod
+    def _run(runtime_config: dict, judge_output: dict):
+        """Run execute_runtime_test with a scripted judge verdict and checks."""
+        executor = _make_executor(runtime_config)
+        test_case = TestRuntimeJudgeErrorFlow._make_test_case()
+
+        with (
+            patch.object(executor, "_run_runtime_preflight_host", return_value=[]),
+            patch.object(executor, "_run_runtime_preflight_workspace", return_value=[]),
+            patch.object(executor, "_inject_task_markdown"),
+            patch.object(executor, "_load_runtime_checks", return_value=[]),
+            patch.object(
+                executor,
+                "_run_container_runtime_task",
+                return_value=("mut output", "user input", "run log", {}, "image", None),
+            ),
+            patch.object(
+                executor.judge_runner,
+                "evaluate_test",
+                return_value=(judge_output, False),
+            ) as mock_judge,
+            patch("nichebench.execution.orchestrator.RuntimeScorer") as mock_scorer_cls,
+        ):
+            mock_scorer = mock_scorer_cls.return_value
+            mock_scorer.run_deterministic_checks.return_value = [
+                CheckResult("module exists", "file_exists", True, "found"),
+                CheckResult("routing exists", "file_exists", False, "missing"),
+            ]
+            mock_scorer.compute_hybrid_score.side_effect = _hybrid_side_effect
+            result = executor.execute_runtime_test(test_case)
+
+        return result, mock_judge
+
+    def test_judge_error_yields_null_scores_and_fails_the_row(self):
+        result, mock_judge = self._run({}, _judge_error_envelope())
+
+        mock_judge.assert_called_once()
+        assert result.error_kind == "judge_unavailable"
+        assert result.judge_attempts == 3
+        assert result.passed is False
+        # Not a catastrophic failure: the row keeps its checks and metadata.
+        assert result.error is None
+        assert result.judge_output.get("catastrophic_failure") is not True
+        # Every score is null — never a fabricated zero.
+        assert result.judge_output["judge_score"] is None
+        assert result.judge_output["hybrid_score"] is None
+        assert result.judge_output["final_score"] is None
+        assert result.judge_output["overall_score"] is None
+        assert result.judge_output["error_kind"] == "judge_unavailable"
+        assert result.judge_output["runtime_judge"]["overall_score"] is None
+        # Deterministic checks survive: 1 of 2 passed.
+        assert result.judge_output["deterministic_score"] == pytest.approx(0.5)
+        assert len(result.judge_output["checks"]) == 2
+
+    def test_judge_error_row_is_excluded_from_the_summary(self, tmp_path: Path):
+        result, _ = self._run({}, _judge_error_envelope())
+        summary_path = tmp_path / "summary.json"
+
+        update_summary(
+            results=[result],
+            summary_path=summary_path,
+            category="runtime",
+            framework="drupal_runtime",
+            mut_model_str="test/mut",
+            judge_model_str="test/judge",
+            mut_runner_model_config={},
+            judge_runner_model_config={},
+            profile=None,
+            eval_config={},
+        )
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+        assert summary["total"] == 0
+        assert summary["attempted_total"] == 1
+        assert summary["judge_errors"] == 1
+        assert summary["failed"] == 0
+        assert summary["passed"] == 0
+        assert summary["avg_score"] is None
+
+    @pytest.mark.parametrize(
+        "kind",
+        ["judge_unavailable", "judge_invalid_json", "config_error"],
+    )
+    def test_error_kinds_are_never_scored(self, kind: str):
+        result, _ = self._run({}, _judge_error_envelope(kind))
+
+        assert result.error_kind == kind
+        assert result.judge_output["hybrid_score"] is None
+        assert result.passed is False
+
+    def test_judge_error_stops_further_samples(self):
+        """A failed judge is not sampled again: no median of error rows."""
+        result, mock_judge = self._run(
+            {"runtime_judge_samples": 3},
+            _judge_error_envelope(),
+        )
+
+        assert mock_judge.call_count == 1
+        assert "judge_sample_scores" not in result.judge_output["runtime_judge"]
+        assert "judge_sample_median" not in result.judge_output["runtime_judge"]
+        assert result.judge_output["judge_score"] is None
+
+    def test_a_normal_judge_verdict_still_scores(self):
+        """The happy path is unchanged: a real verdict still blends into a score."""
+        result, _ = self._run(
+            {},
+            {"overall_score": 0.2, "criteria": [], "summary": "poor", "raw": ""},
+        )
+
+        assert result.error_kind is None
+        assert result.judge_output["judge_score"] == pytest.approx(0.2)
+        # The blend is deterministic 0.5 with judge weight 0.3 over a 0.2 judge score.
+        assert result.judge_output["hybrid_score"] == pytest.approx(0.41)
+        assert result.passed is False
 
 
 def test_normal_run_unaffected_by_watchdog_config():

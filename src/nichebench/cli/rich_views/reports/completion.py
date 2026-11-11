@@ -35,6 +35,7 @@ from nichebench.cli.rich_views.reports.detail_runtime import (
 )
 from nichebench.config.settings import resolve_judge_threshold
 from nichebench.execution.summary import normalize_score
+from nichebench.metrics.types import JUDGE_ERROR_CONFIG
 
 
 def _summary_evaluation_config(summary: Mapping) -> Optional[Mapping]:
@@ -44,6 +45,22 @@ def _summary_evaluation_config(summary: Mapping) -> Optional[Mapping]:
         return None
     evaluation = config.get("evaluation")
     return evaluation if isinstance(evaluation, Mapping) else None
+
+
+def _is_judge_or_config_error_row(row: Mapping) -> bool:
+    """Return ``True`` when a runtime row failed for judge/config reasons.
+
+    Such rows carry no score: the judge never produced a usable verdict
+    (``judge_*``) or the harness itself failed (``config_error``).  They say
+    nothing about the model, so they are not counted as failed model tests.
+    """
+    judge_output = row.get("judge_output")
+    kind = judge_output.get("error_kind") if isinstance(judge_output, Mapping) else None
+    if not (isinstance(kind, str) and kind):
+        kind = row.get("error_kind")
+    if not (isinstance(kind, str) and kind):
+        return False
+    return kind.startswith("judge_") or kind == JUDGE_ERROR_CONFIG
 
 
 def render_run_completion_report(summary_path: Path, details_path: Optional[Path] = None):
@@ -64,6 +81,7 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
     # Clean summary table - exclude config and other verbose data
     is_quiz = summary.get("category") == "quiz"
     is_code = summary.get("category") in ("code_generation", "bug_fixing", "code_agent")
+    is_runtime = summary.get("category") == "runtime"
     display_keys = ["framework", "category", "model", "judge", "total", "results", "avg_score"]
     emoji_map = {
         "results": "📊",
@@ -130,6 +148,22 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
         # ``avg_score`` by the aggregator, so the summary reports the raw
         # attempted count and each infrastructure-failure count — labelled
         # separately — alongside the scored total.
+        extras = [key for key in ("attempted_total", "judge_errors", "config_errors") if key in summary]
+        insert_at = display_keys.index("results")
+        display_keys[insert_at:insert_at] = extras
+        if "attempted_total" in extras:
+            col_titles["attempted_total"] = "🔢 Attempted Total"
+        if "judge_errors" in extras:
+            col_titles["judge_errors"] = "⚠️ Judge Errors"
+        if "config_errors" in extras:
+            col_titles["config_errors"] = "⚠️ Config Errors"
+
+    if is_runtime:
+        # Runtime rows whose judge never answered are excluded from ``total``
+        # and ``avg_score`` by the aggregator, exactly like the code
+        # categories: the report must say how many rows were attempted and
+        # how many failed for infrastructure reasons instead of showing them
+        # as model failures.
         extras = [key for key in ("attempted_total", "judge_errors", "config_errors") if key in summary]
         insert_at = display_keys.index("results")
         display_keys[insert_at:insert_at] = extras
@@ -259,7 +293,14 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
 
             # Count failed tests for this group
             failed_count = 0
+            judge_error_count = 0
             for row in rows:
+                # A row whose judge never answered carries no score: it is an
+                # infrastructure failure, not a failed model test.  This holds
+                # for every category, not just runtime.
+                if _is_judge_or_config_error_row(row):
+                    judge_error_count += 1
+                    continue
                 if cat in ("code_generation", "bug_fixing", "code_agent"):
                     # Same predicate as the detail table: the run's verdict
                     # decides, so a failure never falls outside the count just
@@ -270,15 +311,24 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
                     if not row.get("pass", False):
                         failed_count += 1
 
-            # Skip if no failures to show, but always show runtime tables
-            if failed_count == 0 and cat != "runtime":
+            # Skip if there is nothing to show.  Judge/config-error-only groups
+            # still render so the excluded rows are visible, and runtime tables
+            # always render.
+            if failed_count == 0 and judge_error_count == 0 and cat != "runtime":
                 continue  # Consistent header formatting and width with failure count
 
             if cat == "runtime":
-                total_count = len(rows)
+                # Judge/config error rows are excluded from the scored total
+                # and from the failure count: they are reported separately.
+                total_count = len(rows) - judge_error_count
                 trial_info = ""
                 if multi_trial:
-                    trial_info = f" (multi-trial, {total_count} rows)"
+                    trial_info = f" (multi-trial, {len(rows)} rows)"
+                judge_error_info = (
+                    f"  |  [bold yellow]⚠️ Judge Errors: {judge_error_count}[/bold yellow]"
+                    if judge_error_count
+                    else ""
+                )
                 header_text = (
                     f"[bold]Model:[/bold] [magenta]{mut}[/magenta]  |  "
                     f"[bold]Judged by:[/bold] [cyan]{judge}[/cyan]  |  "
@@ -287,24 +337,37 @@ def render_run_completion_report(summary_path: Path, details_path: Optional[Path
                     f"{trial_info}  |  "
                     f"[bold]Total:[/bold] {total_count}  |  "
                     f"[bold red]❌ Failed: {failed_count}[/bold red]"
+                    f"{judge_error_info}"
                 )
             elif cat == "quiz":
                 # Quiz is judged by an LLM — the judge model travels with the
                 # run; the scoring method is appended by the quiz renderer.
+                judge_error_info = (
+                    f"  |  [bold yellow]⚠️ Judge Errors: {judge_error_count}[/bold yellow]"
+                    if judge_error_count
+                    else ""
+                )
                 header_text = (
                     f"[bold]Model:[/bold] [magenta]{mut}[/magenta]  |  "
                     f"[bold]Judged by:[/bold] [cyan]{judge}[/cyan]  |  "
                     f"[bold]Framework:[/bold] [green]{fw}[/green]  |  "
                     f"[bold]Category:[/bold] [yellow]{cat}[/yellow]  |  "
                     f"[bold red]❌ Failed Tests: {failed_count}[/bold red]"
+                    f"{judge_error_info}"
                 )
             else:
+                judge_error_info = (
+                    f"  |  [bold yellow]⚠️ Judge Errors: {judge_error_count}[/bold yellow]"
+                    if judge_error_count
+                    else ""
+                )
                 header_text = (
                     f"[bold]Model:[/bold] [magenta]{mut}[/magenta]  |  "
                     f"[bold]Judged by:[/bold] [cyan]{judge}[/cyan]  |  "
                     f"[bold]Framework:[/bold] [green]{fw}[/green]  |  "
                     f"[bold]Category:[/bold] [yellow]{cat}[/yellow]  |  "
                     f"[bold red]❌ Failed Tests: {failed_count}[/bold red]"
+                    f"{judge_error_info}"
                 )
 
             # Create different table layouts based on category

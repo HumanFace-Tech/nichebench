@@ -37,6 +37,7 @@ import math
 from typing import Any, Dict, Optional
 
 from nichebench.core.datamodel import TestCaseSpec
+from nichebench.metrics.types import JUDGE_ERROR_CONFIG
 
 
 def _clamp_overall_score(value: Any) -> Optional[float]:
@@ -135,6 +136,18 @@ class TestResult:
         self.trial: int = 1
         self.trials_total: int = 1
 
+    def _is_scoring_error(self) -> bool:
+        """Return ``True`` when the row carries a judge or config error kind.
+
+        Such rows say nothing about the model: the judge was unreachable or
+        produced an unusable verdict, or the harness itself failed.  Their
+        scores are serialized as ``None`` — never as a fabricated zero.
+        """
+        kind = self.error_kind
+        if not isinstance(kind, str) or not kind:
+            return False
+        return kind.startswith("judge_") or kind == JUDGE_ERROR_CONFIG
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization.
 
@@ -152,13 +165,17 @@ class TestResult:
         ``deterministic_score``, ``judge_score``, ``final_score``
             Extracted from ``judge_output`` when it is a ``dict``.  For the
             ``quiz`` category the binary verdict *is* the score:
-            ``deterministic_score`` and ``final_score`` carry the binary
-            pass/fail value derived from the ``passed`` flag and
-            ``judge_score`` is ``None``.  For ``code_generation``,
+            ``judge_score`` and ``final_score`` carry the binary pass/fail
+            value derived from the ``passed`` flag and
+            ``deterministic_score`` is ``None``.  For ``code_generation``,
             ``bug_fixing`` and ``code_agent`` a numeric judge
             ``overall_score`` (clamped to ``[0, 1]``) becomes both
             ``judge_score`` and ``final_score``, with
-            ``deterministic_score`` left ``None``.
+            ``deterministic_score`` left ``None``.  A ``quiz`` row whose
+            ``error_kind`` is a judge error (``judge_*``) or
+            ``config_error`` carries ``None`` for all three score keys —
+            such a row says nothing about the model, so it never gets a
+            fabricated zero.
         ``parse_reason``
             Parse-failure reason from ``judge_output``.  Always present for
             ``quiz`` (``None`` when the judge output carries none); for the
@@ -215,10 +232,19 @@ class TestResult:
                 # verdict by the judge runner, so a stray non-binary
                 # ``score`` in the output must not desync the row from
                 # ``avg_score`` (which is the pass rate).
-                score = 1.0 if self.passed else 0.0
-                d["deterministic_score"] = None
-                d["judge_score"] = score
-                d["final_score"] = score
+                if self._is_scoring_error():
+                    # A judge/config failure is not a model result: the row
+                    # keeps its error metadata and carries null scores
+                    # instead of a fabricated zero.
+                    d["pass"] = False
+                    d["deterministic_score"] = None
+                    d["judge_score"] = None
+                    d["final_score"] = None
+                else:
+                    score = 1.0 if self.passed else 0.0
+                    d["deterministic_score"] = None
+                    d["judge_score"] = score
+                    d["final_score"] = score
                 d["parse_reason"] = self.judge_output.get("parse_reason")
             else:
                 d["deterministic_score"] = self.judge_output.get("deterministic_score")
@@ -237,8 +263,13 @@ class TestResult:
                         d["final_score"] = overall
         elif self.category == "quiz":
             d["deterministic_score"] = None
-            d["judge_score"] = 1.0 if self.passed else 0.0
-            d["final_score"] = 1.0 if self.passed else 0.0
+            if self._is_scoring_error():
+                d["pass"] = False
+                d["judge_score"] = None
+                d["final_score"] = None
+            else:
+                d["judge_score"] = 1.0 if self.passed else 0.0
+                d["final_score"] = 1.0 if self.passed else 0.0
             d["parse_reason"] = None
 
         d["judge_attempts"] = self.judge_attempts

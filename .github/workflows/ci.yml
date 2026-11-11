@@ -44,7 +44,7 @@ jobs:
       run: poetry install --no-interaction --no-ansi
 
     - name: Quiz v2 focused gates
-      run: poetry run pytest -q tests/unit/metrics/test_quiz_scorer.py tests/unit/core/test_quiz_prompt_v2.py tests/unit/core/test_judge_quiz_deterministic.py tests/unit/core/test_framework_loader_quiz_v2.py tests/unit/core/test_result_quiz_v2.py tests/unit/cli/test_quiz_cli_v2.py tests/unit/scripts/test_audit_quiz_data.py tests/unit/frameworks/test_quiz_data_contract.py
+      run: poetry run pytest -q tests/unit/metrics/test_quiz_scorer.py tests/unit/core/test_quiz_prompt_v2.py tests/unit/core/test_judge_quiz_llm.py tests/unit/core/test_framework_loader_quiz_v2.py tests/unit/core/test_result_quiz_v2.py tests/unit/cli/test_quiz_cli_v2.py tests/unit/scripts/test_audit_quiz_data.py tests/unit/frameworks/test_quiz_data_contract.py
 
     - name: Quiz data audit (CI fixture)
       run: |

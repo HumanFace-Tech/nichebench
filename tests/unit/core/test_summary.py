@@ -1111,6 +1111,68 @@ class TestUpdateSummaryConfigErrors:
         assert summary["failed"] == 1
         assert summary["avg_score"] == pytest.approx(0.5)
 
+    def test_quiz_abstention_counts_in_the_denominator(self, tmp_path: Path):
+        """An explicit abstention is a scored zero — never an excluded row."""
+        abstained = _make_quiz_result(
+            test_id="q2",
+            passed=False,
+            score=0.0,
+            selected=None,
+            judge_output={
+                "pass": False,
+                "selected": None,
+                "score": 0.0,
+                "overall_score": 0.0,
+                "explanation": "no identifiable answer",
+                "status": "abstained",
+                "method": "llm",
+                "parse_reason": "no_letter",
+            },
+        )
+        results = [
+            _make_quiz_result(test_id="q1", passed=True, score=1.0),
+            abstained,
+        ]
+
+        summary = self._write_summary(results, tmp_path, category="quiz")
+
+        assert summary["judge_errors"] == 0
+        assert summary["config_errors"] == 0
+        assert summary["total"] == 2
+        assert summary["passed"] == 1
+        assert summary["failed"] == 1
+        assert summary["avg_score"] == pytest.approx(0.5)
+
+    def test_quiz_judge_error_row_carries_null_scores(self, tmp_path: Path):
+        """A judge failure serializes null scores and stays out of the average."""
+        error_result = _make_quiz_result(test_id="q2", passed=False, score=0.0)
+        error_result.judge_output = {
+            "error_kind": "judge_unavailable",
+            "error": "[Error: provider down]",
+            "attempts": 3,
+            "score": None,
+            "overall_score": None,
+        }
+        error_result.error_kind = "judge_unavailable"
+        error_result.judge_attempts = 3
+
+        payload = error_result.to_dict()
+        assert payload["judge_score"] is None
+        assert payload["final_score"] is None
+        assert payload["deterministic_score"] is None
+        assert payload["error_kind"] == "judge_unavailable"
+
+        results = [_make_quiz_result(test_id="q1", passed=True, score=1.0), error_result]
+        summary = self._write_summary(results, tmp_path, category="quiz")
+
+        assert summary["judge_errors"] == 1
+        assert summary["config_errors"] == 0
+        assert summary["attempted_total"] == 2
+        assert summary["total"] == 1
+        assert summary["passed"] == 1
+        assert summary["failed"] == 0
+        assert summary["avg_score"] == pytest.approx(1.0)
+
     def test_runtime_summaries_are_untouched(self, tmp_path: Path):
         """Runtime rows carry no ``error_kind``, so their scoring is unchanged."""
         results = [_make_result("runtime", {"hybrid_score": 0.8}, True)]

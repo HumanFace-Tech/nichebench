@@ -1,6 +1,6 @@
 quiz_default_role: "You are an evaluation judge."
 quiz_notes_hint: "Note: Use the above context to better understand the question and make more accurate assessments."
-quiz_json_contract: "Return a JSON object with keys: pass (true/false), selected (letter), score (0 or 1), explanation (short)."
+quiz_json_contract: "Return a JSON object with keys: pass (true/false), selected (letter), score (0 or 1), explanation (short). Use selected: null only when the model gave no identifiable answer — then pass must be false and explanation must say why."
 
 code_default_role: "You are an expert code reviewer."
 code_eval_intro: "Evaluate the following code implementation:"

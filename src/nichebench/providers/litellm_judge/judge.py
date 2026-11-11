@@ -34,20 +34,27 @@ The judge **must** return a valid JSON object conforming to the contract.
 Failure handling
 ================
 * ``LiteLLMClient.generate()`` never raises — network/API failures return
-  ``"[Error: ...]"`` strings. :meth:`score_runtime` re-raises these as
-  ``RuntimeError`` so the executor's outer retry logic can handle them
-  and fall back to deterministic-only scoring.
+  ``"[Error: ...]"`` strings.
+* :meth:`score_runtime` retries unusable verdicts (``[Error: ...]``,
+  empty/non-JSON output, missing/non-list ``criteria``, a criterion entry
+  in a scored position that is not a mapping) up to ``max_attempts`` times
+  and raises :class:`JudgeError` when every attempt fails; it never
+  fabricates a zero score for an unreachable or malformed judge.
 * :meth:`score_code_generation` / :meth:`score_bug_fixing` retry unusable
   verdicts (``[Error: ...]``, empty/non-JSON output, missing ``criteria``,
-  unscorable rubric) up to ``max_attempts`` times and raise
-  :class:`JudgeError` when every attempt fails; they never fabricate a
-  zero score for an unreachable judge.
+  a criterion entry that is not a mapping, unscorable rubric) up to
+  ``max_attempts`` times and raise :class:`JudgeError` when every attempt
+  fails; they never fabricate a zero score for an unreachable judge.
 * :meth:`score_quiz` retries unusable verdicts (``[Error: ...]``,
   empty/non-JSON output, missing/unusable ``selected``, ``selected``
   outside the offered letters) the same way and raises
   :class:`JudgeError` when every attempt fails.  A valid but wrong
   answer is never retried — the judge's ``selected`` letter is
-  authoritative and is compared with ``gold`` by this adapter.
+  authoritative and is compared with ``gold`` by this adapter.  An
+  explicit ``"selected": null`` with ``pass: false`` and an explanation
+  is an abstention: it is scored as a zero (a model failure), never
+  compared with ``gold``, and never retried.  A judge-supplied ``status``
+  field is discarded and never decides abstention.
 """
 
 import math
@@ -157,10 +164,11 @@ class LiteLLMJudge:
         The judge gets up to ``max_attempts`` tries; an attempt is retried
         only when its output is unusable — an ``[Error: ...]`` payload,
         empty output, a non-JSON body, a missing/non-list ``criteria``
-        array, or a verdict the rubric cannot score.  A usable rubric with
-        a low (or out-of-range) ``overall_score`` is **not** retried: the
-        score is recomputed from the criteria either way, and the judge's
-        own number is preserved under ``judge_overall_score`` for audit.
+        array, a criterion entry that is not a mapping, or a verdict the
+        rubric cannot score.  A usable rubric with a low (or out-of-range)
+        ``overall_score`` is **not** retried: the score is recomputed from
+        the criteria either way, and the judge's own number is preserved
+        under ``judge_overall_score`` for audit.
 
         Between attempts the call sleeps ``retry_delay * 2 ** (attempt - 1)``
         seconds through the injected ``sleeper``.
@@ -196,6 +204,12 @@ class LiteLLMJudge:
     ) -> tuple[Optional[dict[str, Any]], str, str]:
         """Validate and score a single judge response.
 
+        A criterion entry that is not a mapping (a bare string, a number,
+        ``null``) makes the verdict malformed: it is rejected and retried
+        rather than being scored as a zero.  Only the entries the scorer
+        reads — the first ``len(checklist)`` positions — are checked;
+        malformed extras beyond the checklist are ignored.
+
         Returns ``(verdict, "", "")`` on success, or
         ``(None, error_kind, reason)`` when the response must be retried.
         """
@@ -212,7 +226,26 @@ class LiteLLMJudge:
         if not isinstance(criteria, list):
             return None, JUDGE_ERROR_MISSING_CRITERIA, "judge verdict has no criteria list"
 
-        computed = criteria_to_score(criteria, checklist)
+        # Every criterion the scorer will read (the first ``len(checklist)``
+        # positions) must be a mapping.  A string / number / null entry is a
+        # malformed verdict, not a failed criterion: it is retried like any
+        # other unusable output instead of being silently scored as zero.
+        scored_len = min(len(checklist), len(criteria))
+        for index in range(scored_len):
+            if not isinstance(criteria[index], dict):
+                return (
+                    None,
+                    JUDGE_ERROR_INVALID_JSON,
+                    f"judge criterion at position {index} is not an object",
+                )
+
+        # Extra criteria beyond the checklist are never scored; keep the
+        # well-formed ones and drop malformed extras consistently.
+        usable_criteria = list(criteria[:scored_len]) + [
+            item for item in criteria[scored_len:] if isinstance(item, dict)
+        ]
+
+        computed = criteria_to_score(usable_criteria, checklist)
         if computed is None:
             return None, JUDGE_ERROR_MISSING_CRITERIA, "score could not be recomputed from criteria"
 
@@ -228,7 +261,7 @@ class LiteLLMJudge:
         else:
             parsed["judge_overall_score"] = float(judge_score)
 
-        parsed["criteria"] = criteria
+        parsed["criteria"] = usable_criteria
         parsed["overall_score"] = computed
         parsed["attempts"] = attempt
         parsed["raw"] = raw
@@ -260,6 +293,17 @@ class LiteLLMJudge:
         offered range.  A valid but *wrong* answer is **not** retried: a low
         score is a legitimate verdict.
 
+        An explicit ``"selected": null`` is an **abstention** — the judge
+        found no identifiable answer.  It is accepted only when the verdict
+        also carries ``pass`` **exactly** ``False`` and a non-empty
+        ``explanation``; such a verdict is scored ``0.0``, is never
+        compared with the gold, and is never retried.  A null ``selected``
+        with ``pass: true`` (or a missing/non-boolean ``pass``) is an
+        unusable verdict and is retried.  Abstention is derived from that
+        validated state only: any ``status`` field supplied by the judge is
+        discarded and never affects scoring.  An abstention is a scored
+        model failure, not an excluded error.
+
         On success ``selected`` is normalised to a single offered letter and
         compared with the normalised ``gold``: ``pass``, ``score`` and
         ``overall_score`` are recomputed from that comparison (the judge's
@@ -272,11 +316,14 @@ class LiteLLMJudge:
         seconds through the injected ``sleeper``.
 
         Returns:
-            dict with keys ``pass`` (bool), ``selected`` (normalised letter),
-            ``score`` / ``overall_score`` (1.0 or 0.0), ``explanation`` (str),
-            ``judge_pass`` (the judge's own boolean, or ``None``),
-            ``judge_pass_mismatch`` (bool), ``attempts`` (1-based int) and
-            ``raw`` (the unmodified judge output for debugging).
+            dict with keys ``pass`` (bool), ``selected`` (normalised letter,
+            or ``None`` for an abstention), ``score`` / ``overall_score``
+            (1.0 or 0.0), ``explanation`` (str), ``judge_pass`` (the judge's
+            own boolean, or ``None``), ``judge_pass_mismatch`` (bool),
+            ``attempts`` (1-based int) and ``raw`` (the unmodified judge
+            output for debugging).  An abstention additionally carries
+            ``status == "abstained"`` — a marker set by this adapter, never
+            a field taken from the judge's output.
 
         Raises:
             JudgeError: when every attempt produced an unusable verdict —
@@ -302,12 +349,19 @@ class LiteLLMJudge:
             resp = self.client.generate(prompt=prompt, model=model, model_params=model_params)
             raw = resp.get("output", "")
 
-            verdict, kind, reason = self._attempt_quiz(raw, choices)
+            verdict, kind, reason, abstained = self._attempt_quiz(raw, choices)
             if verdict is None:
                 last_kind, last_raw, last_reason = kind, raw, reason
                 if attempt < self.max_attempts:
                     self.sleeper(self.retry_delay * (2 ** (attempt - 1)))
                 continue
+
+            if abstained:
+                # An explicit abstention is a *scored* model failure: the
+                # judge could not map the model's answer onto an offered
+                # letter.  It is never compared with the gold and never
+                # retried.
+                return self._finalize_abstention(verdict, raw, attempt)
 
             selected = verdict["selected"]
             passed = selected == gold_letter
@@ -331,38 +385,113 @@ class LiteLLMJudge:
 
         raise JudgeError(kind=last_kind, attempts=self.max_attempts, last_raw=last_raw, last_reason=last_reason)
 
+    def _finalize_abstention(self, verdict: dict[str, Any], raw: str, attempt: int) -> dict[str, Any]:
+        """Normalise a validated abstention into a scored zero.
+
+        An abstention means the judge found no identifiable answer to map
+        onto an offered letter.  It is a model failure, not a judge
+        failure: the verdict is scored ``0.0``, is never compared with the
+        gold, and is never retried.  ``status`` is set here by the adapter
+        — it is never taken from the judge's own output.
+
+        Args:
+            verdict: the validated abstention verdict returned by
+                :meth:`_attempt_quiz` (``abstained is True``).
+            raw: the unmodified judge output of this attempt.
+            attempt: 1-based attempt number.
+
+        Returns:
+            The verdict with ``pass``/``score``/``overall_score`` set to the
+            abstention outcome, ``selected`` set to ``None``, ``status``
+            set to ``"abstained"``, plus the audit fields ``judge_pass`` /
+            ``judge_pass_mismatch``, ``attempts`` and ``raw``.
+        """
+        passed = False
+        judge_pass = verdict.get("pass")
+        judge_pass_bool = judge_pass if isinstance(judge_pass, bool) else None
+
+        explanation = verdict.get("explanation")
+        verdict["selected"] = None
+        verdict["status"] = "abstained"
+        verdict["pass"] = passed
+        verdict["score"] = 0.0
+        verdict["overall_score"] = 0.0
+        verdict["explanation"] = (
+            str(explanation)
+            if isinstance(explanation, str) and explanation.strip()
+            else "Judge abstained: the model gave no identifiable answer"
+        )
+        verdict["judge_pass"] = judge_pass_bool
+        verdict["judge_pass_mismatch"] = judge_pass_bool is not None and judge_pass_bool != passed
+        verdict["attempts"] = attempt
+        verdict["raw"] = raw
+        return verdict
+
     def _attempt_quiz(
         self, raw: str, choices: list[str]
-    ) -> tuple[Optional[dict[str, Any]], str, str]:
+    ) -> tuple[Optional[dict[str, Any]], str, str, bool]:
         """Validate and normalise a single quiz judge response.
 
-        Returns ``(verdict, "", "")`` on success with ``selected`` normalised
-        to a single offered letter, or ``(None, error_kind, reason)`` when
-        the response must be retried.
+        Returns ``(verdict, "", "", False)`` on success with ``selected``
+        normalised to a single offered letter, ``(verdict, "", "", True)``
+        when the verdict is a validated abstention, or
+        ``(None, error_kind, reason, False)`` when the response must be
+        retried.
+
+        An *explicit* JSON ``null`` for ``selected`` is an abstention: the
+        judge found no identifiable answer.  It is accepted only when the
+        verdict also carries ``pass`` **exactly** ``False`` and a non-empty
+        ``explanation`` — ``pass: true`` with a null ``selected`` is an
+        unusable verdict and is retried.  Any ``status`` field supplied by
+        the judge is discarded before validation: abstention is derived
+        from the validated state only and never from an external field.
+        A missing or unusable ``selected`` field stays a
+        ``judge_missing_selected`` retry.
         """
         if raw.startswith("[Error:"):
-            return None, JUDGE_ERROR_UNAVAILABLE, raw
+            return None, JUDGE_ERROR_UNAVAILABLE, raw, False
         if not raw:
-            return None, JUDGE_ERROR_INVALID_JSON, "judge returned empty output"
+            return None, JUDGE_ERROR_INVALID_JSON, "judge returned empty output", False
 
         parsed = parse_json_safe(raw)
         if not isinstance(parsed, dict):
-            return None, JUDGE_ERROR_INVALID_JSON, "judge did not return a JSON object"
+            return None, JUDGE_ERROR_INVALID_JSON, "judge did not return a JSON object", False
+
+        # Never trust a judge-supplied status: abstention is decided below
+        # from validated state only, so an external ``status`` is dropped.
+        parsed.pop("status", None)
+
+        if "selected" in parsed and parsed["selected"] is None:
+            # Explicit abstention — accepted only when the judge also stated
+            # a failing verdict and explained itself.
+            pass_flag = parsed.get("pass")
+            explanation = parsed.get("explanation")
+            if pass_flag is not False or not (
+                isinstance(explanation, str) and explanation.strip()
+            ):
+                return (
+                    None,
+                    JUDGE_ERROR_MISSING_SELECTED,
+                    "judge abstained without a failing verdict and an explanation",
+                    False,
+                )
+            parsed["selected"] = None
+            return parsed, "", "", True
 
         selected_raw = parsed.get("selected")
         if not isinstance(selected_raw, str) or not selected_raw.strip():
-            return None, JUDGE_ERROR_MISSING_SELECTED, "judge verdict has no usable selected letter"
+            return None, JUDGE_ERROR_MISSING_SELECTED, "judge verdict has no usable selected letter", False
 
         selected = selected_raw.strip().upper()
         if len(selected) != 1 or not selected.isalpha():
-            return None, JUDGE_ERROR_MISSING_SELECTED, "judge selected is not a single letter"
+            return None, JUDGE_ERROR_MISSING_SELECTED, "judge selected is not a single letter", False
 
         allowed = {chr(ord("A") + index) for index in range(len(choices))}
         if selected not in allowed:
-            return None, JUDGE_ERROR_OUT_OF_RANGE, f"judge selected {selected} outside the offered choices"
+            return None, JUDGE_ERROR_OUT_OF_RANGE, f"judge selected {selected} outside the offered choices", False
 
         parsed["selected"] = selected
-        return parsed, "", ""
+        return parsed, "", "", False
 
     # -------------------------------------------------------------------------
     # Code generation
@@ -478,17 +607,35 @@ class LiteLLMJudge:
         ``question``, ``guidance``, and ``bonus`` fields.
 
         Scoring: the judge returns per-criterion ``pass`` values.
-        ``overall_score`` is computed by :func:`_compute_weighted_score`
-        which matches criteria by ``criterion_id`` (primary) or position
-        (fallback). ``overall_score`` is clamped to ``[0.0, 1.0]``.
+        ``overall_score`` is **always recomputed** by
+        :func:`_compute_weighted_score`, which matches criteria by
+        ``criterion_id`` (primary) or position (fallback) and scores each
+        manifest criterion **at most once** — duplicate or extra criteria
+        are ignored and can never inflate the score.  The judge's own
+        numeric ``overall_score`` is kept as ``judge_overall_score`` for
+        audit only — it never decides the score, so a judge that claims
+        ``1.0`` while failing every criterion cannot inflate the result.
+        The recomputed score is clamped to ``[0.0, 1.0]``.
 
-        **Error propagation**: if the judge is unreachable (``[Error:]``)
-        this method raises ``RuntimeError`` so the executor can fall back
-        to deterministic-only scoring rather than silently awarding zero.
+        **Retries**: an attempt is retried only when its output is
+        unusable — an ``[Error: ...]`` payload (an unreachable judge),
+        empty output, a non-JSON body, a missing/non-list ``criteria``
+        array, or a criterion entry in a scored position that is not a
+        mapping.  Between attempts the call sleeps
+        ``retry_delay * 2 ** (attempt - 1)`` seconds through the injected
+        ``sleeper``.
 
         Returns:
-            dict with keys: ``criteria`` (list), ``overall_score`` (float),
-            ``summary`` (str), ``raw`` (str).
+            dict with keys: ``criteria`` (list), ``overall_score`` (float,
+            recomputed), ``judge_overall_score`` (the judge's own number,
+            audit-only), ``summary`` (str), ``attempts`` (int, 1-based),
+            ``raw`` (str, unmodified judge output).
+
+        Raises:
+            JudgeError: when every attempt produced an unusable verdict —
+                kind ``judge_unavailable`` (API/network),
+                ``judge_invalid_json`` or ``judge_missing_criteria``.
+                A judge that cannot be reached is never scored as zero.
         """
         if not checklist_items:
             return {
@@ -505,43 +652,84 @@ class LiteLLMJudge:
             system_prompt=system_prompt,
         )
 
-        resp = self.client.generate(prompt=prompt_text, model=model, model_params=model_params)
-        raw = resp.get("output", "")
+        last_kind = JUDGE_ERROR_UNAVAILABLE
+        last_raw = ""
+        last_reason = "judge did not produce a usable runtime verdict"
 
-        # LiteLLMClient.generate() never raises — it returns "[Error: ...]" on API/network failure.
-        # Re-raise so the executor's outer except-block leaves judge_score=None and falls back to
-        # deterministic-only scoring instead of treating an unreachable model as a zero score.
+        for attempt in range(1, self.max_attempts + 1):
+            resp = self.client.generate(prompt=prompt_text, model=model, model_params=model_params)
+            raw = resp.get("output", "")
+
+            verdict, kind, reason = self._attempt_runtime(raw, checklist_items, attempt)
+            if verdict is not None:
+                return verdict
+            last_kind, last_raw, last_reason = kind, raw, reason
+
+            if attempt < self.max_attempts:
+                self.sleeper(self.retry_delay * (2 ** (attempt - 1)))
+
+        raise JudgeError(kind=last_kind, attempts=self.max_attempts, last_raw=last_raw, last_reason=last_reason)
+
+    def _attempt_runtime(
+        self,
+        raw: str,
+        checklist_items: list[dict[str, Any]],
+        attempt: int,
+    ) -> tuple[Optional[dict[str, Any]], str, str]:
+        """Validate and score a single runtime judge response.
+
+        A criterion entry that is not a mapping (a bare string, a number,
+        ``null``) in a *scored* position — one of the first
+        ``len(checklist_items)`` positions — makes the verdict malformed: it
+        is rejected and retried rather than being scored as a zero.
+
+        Returns ``(verdict, "", "")`` on success, or
+        ``(None, error_kind, reason)`` when the response must be retried.
+        """
+        # LiteLLMClient.generate() never raises — it returns "[Error: ...]"
+        # on API/network failure.
         if raw.startswith("[Error:"):
-            raise RuntimeError(raw)
+            return None, JUDGE_ERROR_UNAVAILABLE, raw
+        if not raw:
+            return None, JUDGE_ERROR_INVALID_JSON, "judge returned empty output"
 
         parsed = _normalize_criteria_key(parse_json_safe(raw))
+        if not isinstance(parsed, dict):
+            return None, JUDGE_ERROR_INVALID_JSON, "judge did not return a JSON object"
 
-        if isinstance(parsed, dict) and "criteria" in parsed and isinstance(parsed["criteria"], list):
-            out = parsed
-            # Recompute overall_score from weighted criteria if judge didn't return a valid float
-            score_val = out.get("overall_score")
-            if not isinstance(score_val, (int, float)) or isinstance(score_val, bool):
-                out["overall_score"] = _compute_weighted_score(out.get("criteria", []), checklist_items)
-            else:
-                # Clamp to [0.0, 1.0]
-                out["overall_score"] = max(0.0, min(1.0, float(score_val)))
+        criteria = parsed.get("criteria")
+        if not isinstance(criteria, list):
+            return None, JUDGE_ERROR_MISSING_CRITERIA, "judge verdict has no criteria list"
+
+        # Every criterion the scorer will read (the first
+        # ``len(checklist_items)`` positions) must be a mapping.  A string /
+        # number / null entry is a malformed verdict, not a failed
+        # criterion: it is retried like any other unusable output instead of
+        # being silently scored as zero.
+        scored_len = min(len(checklist_items), len(criteria))
+        for index in range(scored_len):
+            if not isinstance(criteria[index], dict):
+                return (
+                    None,
+                    JUDGE_ERROR_INVALID_JSON,
+                    f"judge criterion at position {index} is not an object",
+                )
+
+        # The recomputed score is authoritative; the judge's own
+        # overall_score is audit-only (kept raw when it is a finite number).
+        judge_score = parsed.get("overall_score")
+        if (
+            isinstance(judge_score, bool)
+            or not isinstance(judge_score, (int, float))
+            or not math.isfinite(float(judge_score))
+        ):
+            parsed["judge_overall_score"] = None
         else:
-            # Conservative fallback: judge returned invalid JSON or ``criteria``
-            # is not a list of dicts.  Fall back to a zero score with
-            # placeholder criteria — never raise, since runtime scoring
-            # has its own outer exception handler.
-            out = {
-                "criteria": [
-                    {
-                        "criterion_id": str(item.get("id", "")),
-                        "pass": False,
-                        "explanation": "Judge returned invalid JSON",
-                    }
-                    for item in checklist_items
-                ],
-                "overall_score": 0.0,
-                "summary": "Judge did not return structured JSON. See raw output.",
-            }
+            parsed["judge_overall_score"] = float(judge_score)
 
-        out["raw"] = raw
-        return out
+        computed = _compute_weighted_score(criteria, checklist_items)
+        parsed["criteria"] = criteria
+        parsed["overall_score"] = max(0.0, min(1.0, computed))
+        parsed["attempts"] = attempt
+        parsed["raw"] = raw
+        return parsed, "", ""

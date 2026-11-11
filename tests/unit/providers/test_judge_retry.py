@@ -187,6 +187,99 @@ class TestNoRetryOnUsableVerdicts:
         assert result["judge_overall_score"] == pytest.approx(0.7)
 
 
+class TestMalformedCriteriaAreRejected:
+    """A criterion entry that is not a mapping makes the whole verdict unusable.
+
+    A judge that returns ``{"criteria": ["bad"], ...}`` has not delivered a
+    rubric — it has delivered a malformed payload.  Such an attempt is
+    retried and, once the retries are exhausted, raised as a ``JudgeError``;
+    it is never accepted as a rubric worth zero points.
+    """
+
+    def test_non_dict_criterion_exhausts_retries_and_raises(self):
+        malformed = json.dumps({"criteria": ["bad"], "overall_score": 1})
+        judge = _make_judge(malformed)
+
+        with pytest.raises(JudgeError) as excinfo:
+            _score(judge)
+
+        exc = excinfo.value
+        assert exc.kind == "judge_invalid_json"
+        assert exc.attempts == 3
+        assert exc.last_raw == malformed
+        assert len(judge.client.calls) == 3
+
+    def test_mixed_criteria_list_is_rejected(self):
+        """One dict plus one string is still malformed — the attempt is retried."""
+        malformed = json.dumps(
+            {
+                "criteria": [{"criterion": "c0", "pass": True}, "bad"],
+                "overall_score": 1,
+            }
+        )
+        judge = _make_judge(malformed)
+
+        with pytest.raises(JudgeError) as excinfo:
+            _score(judge)
+
+        assert excinfo.value.kind == "judge_invalid_json"
+        assert excinfo.value.attempts == 3
+        assert len(judge.client.calls) == 3
+
+    def test_malformed_criterion_then_valid_verdict_retries_once(self):
+        malformed = json.dumps({"criteria": ["bad"], "overall_score": 1})
+        judge = _make_judge(malformed, _verdict((True, False)))
+
+        result = _score(judge)
+
+        assert len(judge.client.calls) == 2
+        assert result["attempts"] == 2
+        assert result["overall_score"] == pytest.approx(0.5)
+
+    def test_numeric_and_null_criteria_are_rejected(self):
+        for entry in (1, None, 1.5, True):
+            malformed = json.dumps({"criteria": [entry], "overall_score": 1})
+            judge = _make_judge(malformed)
+
+            with pytest.raises(JudgeError) as excinfo:
+                _score(judge)
+
+            assert excinfo.value.kind == "judge_invalid_json"
+            assert len(judge.client.calls) == 3
+
+    def test_extra_non_dict_criterion_beyond_the_checklist_is_ignored(self):
+        """Extras past the checklist length are never scored, so a malformed
+        extra does not invalidate an otherwise usable rubric."""
+        verdict = json.dumps(
+            {
+                "criteria": [
+                    {"criterion": "c0", "pass": True},
+                    {"criterion": "c1", "pass": False},
+                    "extra",
+                ],
+                "overall_score": 0.5,
+            }
+        )
+        judge = _make_judge(verdict)
+
+        result = _score(judge)
+
+        assert len(judge.client.calls) == 1
+        assert result["overall_score"] == pytest.approx(0.5)
+        assert all(isinstance(c, dict) for c in result["criteria"])
+
+    def test_missing_criterion_slots_are_still_scored_as_zero(self):
+        """A short criteria list keeps the ``criteria_to_score`` behaviour:
+        the missing slot counts as zero, it is not a malformed verdict."""
+        verdict = json.dumps({"criteria": [{"criterion": "c0", "pass": True}], "overall_score": 1})
+        judge = _make_judge(verdict)
+
+        result = _score(judge)
+
+        assert len(judge.client.calls) == 1
+        assert result["overall_score"] == pytest.approx(0.5)
+
+
 class TestBackoff:
     def test_delays_double_between_attempts(self):
         delays: list[float] = []

@@ -39,3 +39,15 @@ def test_write_cage_opencode_json_uses_yaml_prompt(tmp_path: Path) -> None:
 
     assert opencode_json.exists()
     assert saved == expected
+
+
+def test_executor_loads_framework_prompts_from_package_path() -> None:
+    """The executor must resolve prompts under the installed package, not the repo root."""
+    from nichebench.execution.orchestrator import TestExecutor
+
+    executor = TestExecutor.__new__(TestExecutor)
+    executor.framework = "drupal"
+    executor.category = "quiz"
+
+    assert executor._load_system_prompt() == QUIZ_SYSTEM_PROMPT
+    assert executor._load_judge_system_prompt() is not None

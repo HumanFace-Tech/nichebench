@@ -351,6 +351,138 @@ def test_model_protocol_failure_is_not_infrastructure():
     assert not is_infrastructure_failure("model_protocol_compatibility", "invalid_request_error")
 
 
+# ---------------------------------------------------------------------------
+# Stage-aware infrastructure classification
+# ---------------------------------------------------------------------------
+
+# Markers that identify a known harness/configuration problem.
+CONFIG_ERROR_MARKERS = [
+    "runtime_container_image must be configured",
+    "cannot connect to the docker daemon",
+    "no such file or directory: 'docker'",
+    "docker: not found",
+    "api key missing",
+    "missing api key",
+    "pull access denied",
+    "unauthorized",
+    "image not found",
+    "no such image",
+    "failed to build",
+    "error getting credentials",
+    "permission denied",
+]
+
+# Stages the harness owns before the model acts: a failure here can never be
+# a model-quality failure.
+SETUP_STAGES = [
+    "config_resolution",
+    "workspace_setup",
+    "environment_bootstrap",
+    "image_build",
+    "artifact_finalization",
+]
+
+
+@pytest.mark.parametrize("marker", CONFIG_ERROR_MARKERS)
+def test_known_config_marker_is_infrastructure(marker):
+    """Every known configuration marker is classified as infrastructure."""
+    from nichebench.execution.diagnostics.trace import is_infrastructure_failure
+
+    assert is_infrastructure_failure("runtime_execution", marker)
+
+
+@pytest.mark.parametrize("marker", CONFIG_ERROR_MARKERS)
+def test_known_config_marker_is_infrastructure_regardless_of_case(marker):
+    """Marker matching is case-insensitive."""
+    from nichebench.execution.diagnostics.trace import is_infrastructure_failure
+
+    assert is_infrastructure_failure("runtime_execution", marker.upper())
+
+
+@pytest.mark.parametrize("stage", SETUP_STAGES)
+def test_setup_stage_failure_is_infrastructure(stage):
+    """A failure in a harness-owned setup stage is infrastructure."""
+    from nichebench.execution.diagnostics.trace import is_infrastructure_failure
+
+    assert is_infrastructure_failure("runtime_execution", "something went wrong", failed_stage=stage)
+
+
+@pytest.mark.parametrize("stage", SETUP_STAGES)
+def test_setup_stage_failure_is_infrastructure_even_for_unknown_class(stage):
+    """The stage alone is enough — no marker text required."""
+    from nichebench.execution.diagnostics.trace import is_infrastructure_failure
+
+    assert is_infrastructure_failure("unknown", "", failed_stage=stage)
+
+
+def test_deterministic_checks_failure_is_not_automatically_infrastructure():
+    """A critical check failure is a model failure and stays scored."""
+    from nichebench.execution.diagnostics.trace import (
+        classify_runtime_failure,
+        is_infrastructure_failure,
+    )
+
+    failure = classify_runtime_failure(
+        error="expected file to exist",
+        failed_critical_check=True,
+        failed_stage="deterministic_checks",
+    )
+    assert not is_infrastructure_failure(
+        failure.failure_class,
+        "expected file to exist",
+        failed_stage="deterministic_checks",
+    )
+
+
+def test_agent_execution_model_error_is_not_infrastructure():
+    """A genuine agent/model failure during agent_execution stays scored."""
+    from nichebench.execution.diagnostics.trace import (
+        classify_runtime_failure,
+        is_infrastructure_failure,
+    )
+
+    error = "opencode exited with code 1 after 3 turns"
+    failure = classify_runtime_failure(
+        error=error,
+        failed_critical_check=False,
+        failed_stage="agent_execution",
+    )
+    assert not is_infrastructure_failure(failure.failure_class, error, failed_stage="agent_execution")
+
+
+def test_model_protocol_class_alone_is_not_infrastructure():
+    """The model-protocol class on its own never marks a failure as infra."""
+    from nichebench.execution.diagnostics.trace import is_infrastructure_failure
+
+    assert not is_infrastructure_failure("model_protocol_compatibility", "invalid_request_error")
+    assert not is_infrastructure_failure(
+        "model_protocol_compatibility",
+        "invalid_request_error",
+        failed_stage="agent_execution",
+    )
+
+
+def test_known_config_marker_wins_over_model_protocol_class():
+    """A config marker stays decisive even when the class heuristic misfires.
+
+    ``classify_runtime_failure`` labels any error text mentioning "tool" as a
+    model-protocol mismatch, so a broken harness must not be scored against
+    the model just because of that substring.
+    """
+    from nichebench.execution.diagnostics.trace import (
+        classify_runtime_failure,
+        is_infrastructure_failure,
+    )
+
+    error = "unauthorized: authentication required while pulling the tool image"
+    failure = classify_runtime_failure(
+        error=error,
+        failed_critical_check=False,
+        failed_stage="agent_execution",
+    )
+    assert is_infrastructure_failure(failure.failure_class, error, failed_stage="agent_execution")
+
+
 def test_failure_shortcut_marks_harness_error_as_config_error():
     from nichebench.core.datamodel import TestCaseSpec
     from nichebench.execution.result import TestResult
@@ -374,3 +506,146 @@ def test_failure_shortcut_marks_harness_error_as_config_error():
     assert result.passed is False
     assert result.error_kind == "config_error"
     assert result.judge_output["error_kind"] == "config_error"
+
+
+def _runtime_result(test_id: str = "rt"):
+    from nichebench.core.datamodel import TestCaseSpec
+    from nichebench.execution.result import TestResult
+
+    return TestResult(
+        "drupal_runtime",
+        "runtime",
+        TestCaseSpec(id=test_id, type="runtime", raw={}),
+        "model/x",
+        "judge/y",
+    )
+
+
+def test_failure_shortcut_uses_trace_failed_stage_for_classification():
+    """A failure recorded in a setup stage is excluded from model scores."""
+    from nichebench.execution.runtime.executor.failure_shortcut import apply_failure_shortcut
+
+    result = _runtime_result()
+    trace = RuntimeTrace(test_id="rt")
+    trace.stage_start("environment_bootstrap")
+    trace.stage_end("environment_bootstrap", "failed", {"error": "boom"})
+
+    apply_failure_shortcut(
+        result=result,
+        catastrophic_reason="boom",
+        diagnostics_enabled=True,
+        runtime_artifacts={},
+        trace=trace,
+    )
+    assert result.error_kind == "config_error"
+    assert result.judge_output["error_kind"] == "config_error"
+
+
+def test_failure_shortcut_accepts_explicit_failed_stage():
+    """An explicit failed_stage overrides the trace-derived stage."""
+    from nichebench.execution.runtime.executor.failure_shortcut import apply_failure_shortcut
+
+    result = _runtime_result()
+    trace = RuntimeTrace(test_id="rt")
+
+    apply_failure_shortcut(
+        result=result,
+        catastrophic_reason="boom",
+        diagnostics_enabled=True,
+        runtime_artifacts={},
+        trace=trace,
+        failed_stage="workspace_setup",
+    )
+    assert result.error_kind == "config_error"
+    assert result.judge_output["error_kind"] == "config_error"
+
+
+def test_failure_shortcut_keeps_agent_execution_model_failure_scored():
+    """An agent-execution model failure is not excluded from model scores."""
+    from nichebench.execution.runtime.executor.failure_shortcut import apply_failure_shortcut
+
+    result = _runtime_result()
+    trace = RuntimeTrace(test_id="rt")
+
+    apply_failure_shortcut(
+        result=result,
+        catastrophic_reason="opencode exited with code 1 after 3 turns",
+        diagnostics_enabled=True,
+        runtime_artifacts={},
+        trace=trace,
+        failed_stage="agent_execution",
+    )
+    assert result.passed is False
+    assert result.error_kind is None
+    assert "error_kind" not in result.judge_output
+
+
+def test_handle_exception_marks_setup_stage_failure_as_config_error():
+    """An exception in a setup stage is excluded from model-quality averages."""
+    from nichebench.execution.runtime.executor.stages import handle_exception
+
+    result = _runtime_result()
+    trace = RuntimeTrace(test_id="rt")
+    trace.stage_start("environment_bootstrap")
+
+    handle_exception(
+        trace=trace,
+        current_stage="environment_bootstrap",
+        result=result,
+        workspace=None,
+        runtime_timeout_seconds=60,
+        keep_workspace=False,
+        use_runtime_workspace=False,
+        diagnostics_enabled=True,
+        exc=RuntimeError("boom"),
+    )
+    assert result.passed is False
+    assert result.error_kind == "config_error"
+    assert result.judge_output["error_kind"] == "config_error"
+
+
+def test_handle_exception_marks_config_marker_failure_as_config_error():
+    """A known configuration marker in the exception text is excluded."""
+    from nichebench.execution.runtime.executor.stages import handle_exception
+
+    result = _runtime_result()
+    trace = RuntimeTrace(test_id="rt")
+    trace.stage_start("agent_execution")
+
+    handle_exception(
+        trace=trace,
+        current_stage="agent_execution",
+        result=result,
+        workspace=None,
+        runtime_timeout_seconds=60,
+        keep_workspace=False,
+        use_runtime_workspace=False,
+        diagnostics_enabled=True,
+        exc=RuntimeError("runtime_container_image must be configured"),
+    )
+    assert result.error_kind == "config_error"
+    assert result.judge_output["error_kind"] == "config_error"
+
+
+def test_handle_exception_keeps_agent_execution_model_failure_scored():
+    """A genuine agent/model failure during agent_execution stays scored."""
+    from nichebench.execution.runtime.executor.stages import handle_exception
+
+    result = _runtime_result()
+    trace = RuntimeTrace(test_id="rt")
+    trace.stage_start("agent_execution")
+
+    handle_exception(
+        trace=trace,
+        current_stage="agent_execution",
+        result=result,
+        workspace=None,
+        runtime_timeout_seconds=60,
+        keep_workspace=False,
+        use_runtime_workspace=False,
+        diagnostics_enabled=True,
+        exc=RuntimeError("opencode exited with code 1 after 3 turns"),
+    )
+    assert result.passed is False
+    assert result.error_kind is None
+    assert "error_kind" not in result.judge_output

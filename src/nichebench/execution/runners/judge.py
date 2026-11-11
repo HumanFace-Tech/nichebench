@@ -43,13 +43,15 @@ from nichebench.core.datamodel import TestCaseSpec
 from nichebench.core.quiz_text import normalize_choice
 from nichebench.metrics.quiz import MAX_NUM_CHOICES, MIN_NUM_CHOICES, score_quiz
 from nichebench.metrics.sanity import structural_checks
-from nichebench.metrics.types import SanityFinding
+from nichebench.metrics.types import JUDGE_ERROR_CONFIG, SanityFinding
 from nichebench.providers.litellm_client import LiteLLMClient
 from nichebench.providers.litellm_judge import JudgeError, LiteLLMJudge
 
 # Verdict returned when a quiz task has no usable choices.  Such a task can
 # never be scored, so it fails closed without a judge call instead of raising.
-# ``method`` is ``"validation"``: this is a data defect, not a model verdict.
+# ``method`` is ``"validation"``: this is a data defect, not a model verdict,
+# so it carries ``error_kind == "config_error"`` and is counted as a
+# configuration failure instead of dragging the model's pass rate down.
 _INVALID_QUIZ_OUTPUT: Dict[str, Any] = {
     "pass": False,
     "selected": None,
@@ -57,6 +59,7 @@ _INVALID_QUIZ_OUTPUT: Dict[str, Any] = {
     "explanation": "Quiz task is missing choices",
     "method": "validation",
     "parse_reason": "invalid_task",
+    "error_kind": JUDGE_ERROR_CONFIG,
 }
 
 # Verdict returned when a quiz task offers usable choices but its
@@ -70,6 +73,7 @@ _INVALID_QUIZ_GOLD_OUTPUT: Dict[str, Any] = {
     "explanation": "Quiz task is missing or invalid correct_choice",
     "method": "validation",
     "parse_reason": "invalid_gold",
+    "error_kind": JUDGE_ERROR_CONFIG,
 }
 
 # Verdict returned when the choice count is outside the scorable range.
@@ -80,6 +84,7 @@ _INVALID_QUIZ_CHOICE_COUNT_OUTPUT: Dict[str, Any] = {
     "explanation": f"Quiz task has an unsupported number of choices (expected {MIN_NUM_CHOICES}-{MAX_NUM_CHOICES})",
     "method": "validation",
     "parse_reason": "invalid_task",
+    "error_kind": JUDGE_ERROR_CONFIG,
 }
 
 # Verdict returned for a category the judge runner does not know.  The
@@ -321,7 +326,9 @@ class JudgeRunner:
         Task data is validated first: missing/blank gold, missing choices,
         an out-of-range gold letter and unsupported choice counts are data
         defects, so they fail closed with a ``validation`` verdict and
-        **no** judge call.
+        **no** judge call.  Such a verdict carries
+        ``error_kind == "config_error"``: it says nothing about the model,
+        so the row is counted as a configuration failure and never scored.
 
         On the happy path the judge's ``selected`` letter is authoritative
         (see :meth:`LiteLLMJudge.score_quiz`): ``pass`` / ``score`` are
@@ -402,7 +409,7 @@ class JudgeRunner:
 
         A lean structural sanity pass runs first (unless
         ``evaluation.code_sanity_checks`` is ``False``): a hard finding
-        (no code at all / obviously truncated) returns a zero-score verdict
+        (an empty response / obviously truncated) returns a zero-score verdict
         without calling the judge, and every finding is attached to the
         successful judge output as ``sanity_findings``.
 
@@ -493,7 +500,16 @@ class JudgeRunner:
         mut_output: str,
         runtime_artifacts: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], bool]:
-        """Score a runtime task with the LLM judge over the artifact bundle."""
+        """Score a runtime task with the LLM judge over the artifact bundle.
+
+        A judge failure (unreachable judge, unusable verdict) is caught here
+        and turned into an error envelope: ``error_kind`` / ``error`` /
+        ``attempts`` plus null scores.  The error never escapes to the
+        runtime executor's catastrophic-failure handler, and no zero score is
+        fabricated for a judge that could not answer.
+
+        Returns ``(judge_output, passed)``.
+        """
         llm_judge_config = test_case.raw.get("llm_judge", {})
         checklist = llm_judge_config.get("checklist", [])
 
@@ -514,15 +530,32 @@ class JudgeRunner:
             task_description = _build_runtime_task_description(test_case.raw)
             artifact_summary = _build_runtime_artifact_summary(runtime_artifacts)
 
-        judge_output = self.judge.score_runtime(
-            task_description=str(task_description),
-            artifact_summary=str(artifact_summary),
-            checklist_items=checklist,
-            model=self.model_str,
-            model_params=self.model_config.get("parameters", {}),
-            system_prompt=llm_judge_config.get("model_role", "Be a fair evaluator."),
-        )
+        try:
+            judge_output = self.judge.score_runtime(
+                task_description=str(task_description),
+                artifact_summary=str(artifact_summary),
+                checklist_items=checklist,
+                model=self.model_str,
+                model_params=self.model_config.get("parameters", {}),
+                system_prompt=llm_judge_config.get("model_role", "Be a fair evaluator."),
+            )
+        except JudgeError as exc:
+            return (
+                {
+                    "error_kind": exc.kind,
+                    "error": str(exc),
+                    "attempts": exc.attempts,
+                    "overall_score": None,
+                    "judge_score": None,
+                    "hybrid_score": None,
+                    "final_score": None,
+                    "summary": f"Judge error ({exc.kind}) after {exc.attempts} attempt(s): {exc}",
+                },
+                False,
+            )
 
-        overall_score = float(judge_output.get("overall_score", 0.0))
-        passed = overall_score >= 0.5  # Default threshold
+        overall_score = judge_output.get("overall_score")
+        if isinstance(overall_score, bool) or not isinstance(overall_score, (int, float)):
+            overall_score = 0.0
+        passed = float(overall_score) >= 0.5  # Default threshold
         return judge_output, passed

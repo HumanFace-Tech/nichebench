@@ -27,6 +27,7 @@ from typing import Any, Dict, Optional
 from nichebench.execution.diagnostics.trace import (
     RuntimeTrace,
     classify_runtime_failure,
+    first_failed_stage,
     is_infrastructure_failure,
 )
 from nichebench.execution.result import TestResult
@@ -62,6 +63,7 @@ def apply_failure_shortcut(
     diagnostics_enabled: bool,
     runtime_artifacts: Dict[str, Any],
     trace: RuntimeTrace,
+    failed_stage: Optional[str] = None,
 ) -> None:
     """Apply catastrophic failure short-circuit: skip checks/judge, mark result failed.
 
@@ -71,12 +73,18 @@ def apply_failure_shortcut(
         diagnostics_enabled: Whether diagnostics are enabled
         runtime_artifacts: Runtime artifacts dict (modified in place)
         trace: RuntimeTrace instance
+        failed_stage: Stage the failure belongs to.  When omitted, the trace's
+            first failed stage is used; if the trace records no failure, the
+            failure is attributed to ``agent_execution``.
     """
     result.passed = False
+    # The trace records the stage that failed; fall back to the stage the
+    # failure is attributed to when the trace holds no failure of its own.
+    effective_stage = failed_stage or first_failed_stage({"stages": trace.stages}) or "agent_execution"
     failure_info = classify_runtime_failure(
         error=catastrophic_reason,
         failed_critical_check=False,
-        failed_stage="agent_execution",
+        failed_stage=effective_stage,
     )
     result.judge_output = {
         "catastrophic_failure": True,
@@ -85,7 +93,7 @@ def apply_failure_shortcut(
     }
     if diagnostics_enabled:
         result.judge_output.update(failure_info.to_dict())
-    if is_infrastructure_failure(failure_info.failure_class, catastrophic_reason):
+    if is_infrastructure_failure(failure_info.failure_class, catastrophic_reason, failed_stage=effective_stage):
         # Broken image/CLI/environment: exclude from model-quality averages.
         result.error_kind = "config_error"
         result.judge_output["error_kind"] = "config_error"
