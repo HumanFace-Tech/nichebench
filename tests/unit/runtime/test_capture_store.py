@@ -192,9 +192,10 @@ class TestBlobStore:
         payload = ("x" * BLOCK_SIZE) + "tail"
         record = journal.store_payload("request_body", payload.encode("utf-8"))
         assert journal.blobs.get(BlobRef.from_dict(record["payload_ref"])) == payload.encode("utf-8")
-        manifest = json.loads(
-            next(p for p in attempt.blobs_path.glob("*.bin") if p.stat().st_size < 4096).read_text("utf-8")
-        )
+        # The payload reference points at the manifest block; read that exact
+        # file instead of guessing by size (a small data block can sort first).
+        manifest_path = attempt.blobs_path / f"{record['payload_ref']['sha256']}.bin"
+        manifest = json.loads(manifest_path.read_text("utf-8"))
         assert manifest["block_size"] == BLOCK_SIZE
         assert len(manifest["blocks"]) >= 2
 
