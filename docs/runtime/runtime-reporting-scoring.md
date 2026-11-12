@@ -28,7 +28,7 @@ Derived from deterministic checks defined in the task manifest (`checks` list). 
 judge_score = LLM judge rubric score (0.0 – 1.0)
 ```
 
-The LLM judge consumes the artifact bundle and evaluates against a rubric checklist defined in the task manifest (`judge_checklist`). The judge does not execute DDEV commands directly.
+The LLM judge consumes the artifact bundle and evaluates against a rubric checklist defined in the task manifest (`judge_checklist`). The judge does not execute DDEV commands directly. Calls retry up to three times. NicheBench recomputes the score from manifest criteria and scores each criterion at most once, so duplicate or extra judge criteria cannot inflate the result.
 
 ### Hybrid Score
 
@@ -36,7 +36,13 @@ The LLM judge consumes the artifact bundle and evaluates against a rubric checkl
 hybrid_score = (deterministic_weight × deterministic_score) + (judge_weight × judge_score)
 ```
 
-Default weights per manifest: 70% deterministic / 30% judge. Weights are configurable per-task.
+Default weights per manifest: 70% deterministic / 30% judge. Weights are configurable per-task. A failed or malformed judge response is not replaced with a deterministic-only hybrid score.
+
+### Judge and configuration errors
+
+After three unsuccessful attempts, judge outages or malformed output raise `JudgeError` with `judge_unavailable`, `judge_invalid_json`, or `judge_missing_criteria`. The result row records `error_kind`, sets `passed=false`, and serializes `judge_score`, `hybrid_score`, `final_score`, and `overall_score` as null. These rows count as `judge_errors` and are excluded from model averages and failed-model counts in completion headers. Completion headers show judge-error counts for quiz, code, and runtime runs.
+
+Runtime setup, image, Docker, network, CLI, or configuration failures use `error_kind=config_error`. They count as `config_errors` and are also excluded from model averages. Reports display `ERROR`/`N/A` for these excluded rows rather than treating them as 0%.
 
 ### Critical Gate
 
@@ -75,6 +81,8 @@ Columns:
 | `Hybrid` | Computed | Weighted blend; `✓` if ≥ threshold |
 | `Critical` | `checks.json` | `true` if any critical check failed |
 | `Result` | Gate | `PASS` / `FAIL` |
+
+If the row has a judge or configuration error, the report uses `ERROR`/`N/A` for unavailable scores and shows the corresponding error count. Such rows do not contribute to model averages or failed-model counts.
 
 ---
 

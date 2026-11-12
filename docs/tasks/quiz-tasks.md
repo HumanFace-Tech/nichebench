@@ -37,8 +37,9 @@ The configured LLM judge determines the answer letter used for scoring. The judg
 - **Judge:** the judge extracts a selected letter from the full candidate answer. NicheBench compares it with `correct_choice`.
 - **Score:** binary — `1.0` when the judge-selected letter matches, `0.0` otherwise. There is no partial credit or 3-value Pass/Partial/Fail band. Results serialize `judge_score` and `final_score` as 1.0 or 0.0, with `deterministic_score: null`.
 - **Parser audit:** the deterministic parser records `selected`, `parse_reason`, and `agrees` alongside the judge result. For example, with gold `B`, the response `"A is deprecated, so B"` can be scored as `B` by the judge while the parser reports `agrees: false`. The parser disagreement does not change the score.
-- **Retries and errors:** judge calls retry up to 3 times after transient or parse failures. Exhausted failures raise `JudgeError` with `judge_unavailable`, `judge_invalid_json`, `judge_missing_selected`, or `judge_out_of_range`. These rows count as `judge_errors` and are excluded from quiz averages.
-- **Validation:** invalid task data (missing or blank gold, missing choices, unsupported choice count, or out-of-range gold) fails closed with `parse_reason` `invalid_task` or `invalid_gold` and `method: "validation"`; the judge is not called.
+- **Abstention:** an explicit judge abstention (`selected: null`, `pass: false`, and a non-empty explanation) is a scored zero. It remains in result totals and averages; an external judge `status` does not override a valid selected letter.
+- **Retries and errors:** judge calls retry up to 3 times after transient or parse failures. Exhausted failures raise `JudgeError` with `judge_unavailable`, `judge_invalid_json`, `judge_missing_selected`, or `judge_out_of_range`. These rows serialize `judge_score`, `final_score`, and `deterministic_score` as null, count as `judge_errors`, and are excluded from quiz averages.
+- **Validation:** invalid task data (missing or blank gold, missing choices, unsupported choice count, or out-of-range gold) is `error_kind: "config_error"` with `method: "validation"`; the judge is not called. These rows count as `config_errors` and are excluded from model averages.
 
 The parser audit fields expose disagreements between lexical parsing and judge interpretation without affecting accuracy.
 

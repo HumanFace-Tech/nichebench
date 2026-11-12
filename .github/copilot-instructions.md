@@ -5,7 +5,7 @@
 * **Scope:** Drupal classic tasks (quiz, code generation, bug fixing) and `drupal_runtime` agentic tasks. `drupal_runtime` is the canonical path for new agentic tasks; the deprecated `code_agent` prototype was removed. Existing results and historical records remain unchanged.
 * **Key Features:**
 
-  * **Scoring:** Quiz uses an LLM judge that selects the letter from the candidate answer; a deterministic parser is recorded as an audit cross-check only. Code generation and bug fixing use LLM-as-a-Judge.
+   * **Scoring:** Quiz uses an LLM judge that selects the letter from the candidate answer; a deterministic parser is recorded as an audit cross-check only. Explicit abstention is a scored zero. Code generation and bug fixing use LLM-as-a-Judge.
   * **Task categories:** Quiz, code generation, and bug fixing use classic runners. Agentic tasks use `drupal_runtime`, which runs against live DDEV.
   * **Criteria scoring**: Judge criteria map to true (1), partial (0.5), or false/missing (0); NicheBench recomputes the aggregate score.
   * **Runaway Protection**: Sophisticated repetition detection prevents infinite loops and excessive token consumption.
@@ -70,13 +70,13 @@
 
    * YAML schema includes `id`, `prompt`/`question`, `choices` (for quizzes), `correct_choice` or `checklist` for code/bug.
    * Each test case may include a **dynamic checklist** for Judge LLM.
-   * System prompts for Judge live in `prompts/`, imported by registry.
+   * System prompts for Judge live in `prompts/`, imported by registry. The executor resolves framework prompts from the installed package path under `src/nichebench/frameworks/` (or the installed package), not the repository root; framework MUT and judge prompts are applied.
 
 5. **Metrics:**
 
-   * **Quiz tasks:** `LiteLLMJudge.score_quiz` selects the letter; NicheBench compares it with the gold letter. The deterministic parser is an audit cross-check and never decides the score. Judge calls retry up to 3 times; judge errors are excluded from averages.
-   * **Code/Bug tasks:** direct `LiteLLMJudge` returns rubric criteria (no DeepEval). The score is recomputed from criteria and clamped. Judge calls retry up to 3 times on transient or parse failures; judge errors are excluded from averages.
-   * Criteria score true as 1.0, partial as 0.5, and false or missing as 0.0.
+   * **Quiz tasks:** `LiteLLMJudge.score_quiz` selects the letter; NicheBench compares it with the gold letter. The deterministic parser records `selected`, `parse_reason`, and `agrees` for audit only. Abstention (`selected: null`, `pass: false`, non-empty explanation) scores zero and is included in averages. Invalid task data is `config_error`, makes no judge call, and is excluded from averages. Judge calls retry up to 3 times; exhausted judge errors are excluded from averages.
+   * **Code/Bug tasks:** direct `LiteLLMJudge` returns rubric criteria (no DeepEval). The score is recomputed from criteria and clamped. Judge calls retry up to 3 times; malformed non-dict criteria are retried as `judge_invalid_json`, not treated as a crash. Judge errors are excluded from averages. Empty/whitespace output and truncated fences fail structural sanity; uncertain or unfenced content is advisory and reaches the judge.
+   * Criteria score true as 1.0, partial as 0.5, and false or missing as 0.0. Runtime recomputes its weighted score from manifest criteria, scoring each criterion at most once. Judge failures and runtime setup/image/Docker/network/CLI/config failures are excluded from averages as `judge_errors` or `config_errors`; reports show `ERROR`/`N/A`, not 0% or a deterministic-only hybrid fallback.
 
 6. **Results:**
 

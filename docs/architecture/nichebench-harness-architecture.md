@@ -96,6 +96,8 @@ Quiz: judge-selected letter compared with gold for binary pass/fail; code/bug: c
 
 Quiz, code, and bug judge requests retry up to 3 times after transient or parse failures. Quiz compares the judge-selected letter with gold; its deterministic parser output (`selected`, `parse_reason`, `agrees`) is audit-only. Quiz results record `judge_method="llm"` and the configured judge model; `judge_score` and `final_score` are binary and `deterministic_score` is null. Exhausted quiz judge failures use `judge_unavailable`, `judge_invalid_json`, `judge_missing_selected`, or `judge_out_of_range`, count as `judge_errors`, and are excluded from quiz averages. Code/bug judge failures use `judge_unavailable` or `judge_invalid_json` and are also excluded from averages. Harness/configuration failures use `error_kind=config_error`; they are reported as `config_errors`, separately from `judge_errors`. Runtime judge outages use the same `judge_*` exclusion, and runtime setup/image/Docker/network failures are classified `config_error` instead of becoming zero model scores. `judge_overall_score` is retained for audit only; code/bug `judge_score` and `final_score` use the recomputed criteria score.
 
+For quiz scoring, explicit abstention (`selected: null`, `pass: false`, non-empty explanation) is a scored zero and remains in averages; invalid quiz data is a `config_error` and is excluded. The executor resolves framework system prompts from `src/nichebench/frameworks/...` in the installed package, not from the repository root. This applies the framework MUT and judge prompts for quiz, code generation, and bug fixing.
+
 ---
 
 ## Runtime Task Flow (Cage Mode)

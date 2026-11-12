@@ -14,8 +14,8 @@ Every runtime task:
 4. Runs the **agent-under-test** (OpenCode in cage mode)
 5. Captures an **artifact bundle**
 6. Runs **deterministic checks** (file existence, grep, drush commands, static analysis)
-7. Optionally runs an **LLM judge** against the artifacts
-8. Computes a **hybrid score**
+7. Runs an **LLM judge** against the artifacts, retrying up to three times
+8. Recomputes each manifest criterion at most once, then computes the **hybrid score**. Judge failures and runtime configuration failures are excluded from model averages, not converted to scores.
 
 Runtime tasks are **disabled by default**. Enable with:
 

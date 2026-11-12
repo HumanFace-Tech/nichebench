@@ -91,9 +91,9 @@ git submodule update --init --recursive
 
 ## Scoring
 
-- **Quiz:** `LiteLLMJudge` selects a letter from the candidate answer, and NicheBench compares it with the gold letter for a binary score. The deterministic parser runs as an audit cross-check only. Judge calls retry up to 3 times after transient or parse failures; exhausted judge errors are counted and excluded from quiz averages. `--judge` selects the quiz judge model.
+- **Quiz:** `LiteLLMJudge` selects a letter from the candidate answer, and NicheBench compares it with the gold letter for a binary score. The deterministic parser records `selected`, `parse_reason`, and `agrees` for audit only. An explicit abstention (`selected: null`, `pass: false`, with a non-empty explanation) is a scored zero, not an error. Judge calls retry up to 3 times; exhausted judge errors and invalid task data are counted separately as `judge_errors` and `config_errors`, and excluded from quiz averages. `--judge` selects the quiz judge model.
 - **Code generation and bug fixing:** a direct `LiteLLMJudge` call scores rubric criteria. NicheBench recomputes and clamps the score from those criteria. Judge requests get up to 3 attempts after transient or parse failures; judge errors are recorded and excluded from averages.
-- **Runtime:** deterministic checks and an optional LLM judge produce a weighted hybrid score. A critical check failure sets `passed=False`; the default threshold is `0.7`.
+- **Runtime:** deterministic checks and the LLM judge produce a weighted hybrid score recomputed from manifest criteria. Judge outages/malformed output and runtime setup, image, Docker, network, or CLI/configuration failures are reported as `judge_errors` or `config_errors`, not zero scores, and are excluded from model averages. Reports show `ERROR`/`N/A` for excluded rows. A critical check failure sets `passed=False`; the default threshold is `0.7`.
 
 See [docs/runtime/runtime-reporting-scoring.md](docs/runtime/runtime-reporting-scoring.md) for full detail.
 

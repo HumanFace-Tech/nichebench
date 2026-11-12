@@ -10,6 +10,8 @@ The original decision D2, no LLM judge for quiz, was superseded. The determinist
 
 Judge calls retry up to three times after transient or parse failures. Exhausted judge failures are reported as errors and excluded from quiz averages. The data repair and rebalance described in this ADR remain in effect.
 
+An explicit abstention is scored as zero; invalid quiz data is a `config_error` and is excluded from model averages.
+
 ## Problem
 
 The quiz dataset and its scoring path had four coupled defects:
