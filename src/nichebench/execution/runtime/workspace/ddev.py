@@ -14,9 +14,42 @@ Side-effect boundaries
 - Does NOT own workspace creation or cleanup (those are in ``model.py``).
 """
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Optional
+
+from nichebench.execution.runtime.concurrency import exclusive_ddev_start_lock
+
+# A DDEV project name doubles as a DNS label (subdomain) and as a Docker
+# resource prefix, so it must be a lowercase DNS label: [a-z0-9-], 1-63
+# characters, no leading or trailing hyphen.
+_DDEV_PROJECT_NAME_PATTERN = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?")
+
+MAX_DDEV_PROJECT_NAME_LENGTH = 63
+
+# How long a parallel runtime task waits for another task's `ddev start`
+# to finish before giving up.
+DDEV_START_LOCK_TIMEOUT_SECONDS = 600
+
+
+def is_valid_ddev_project_name(name: str) -> bool:
+    """Return True when ``name`` is a safe lowercase DNS label.
+
+    Valid names contain only ``[a-z0-9-]``, are 1-63 characters long, and do
+    not start or end with a hyphen.  Such names are safe to use as a DDEV
+    project name, as a Docker resource prefix (``ddev-<name>-*``), and as a
+    subdomain label (``<name>.ddev.site``).
+
+    Args:
+        name: Candidate project name.
+
+    Returns:
+        True when the name satisfies every constraint.
+    """
+    if not name or len(name) > MAX_DDEV_PROJECT_NAME_LENGTH:
+        return False
+    return _DDEV_PROJECT_NAME_PATTERN.fullmatch(name) is not None
 
 
 def is_network_pool_exhaustion_error(exc: subprocess.CalledProcessError) -> bool:
@@ -118,9 +151,47 @@ def patch_settings_php(path: Path, command_log: list[dict[str, object]]) -> None
     )
 
 
+def _start_with_retry(
+    path: Path,
+    ddev_project_name: str,
+    command_log: list[dict[str, object]],
+    timeout: Optional[int] = None,
+) -> None:
+    """Run ``ddev start`` and retry once after network-pool exhaustion.
+
+    Callers must hold the host-wide DDEV start lock while calling this
+    helper: the lock is acquired once around the whole attempt (including
+    the retry) instead of once per attempt, because re-acquiring it here
+    would deadlock against the lock the caller already holds.
+
+    Args:
+        path: Workspace path (used as CWD for ddev commands).
+        ddev_project_name: Name of the DDEV project being started.
+        command_log: Shared command log list to append entries to.
+        timeout: Optional command timeout in seconds.
+
+    Raises:
+        DDEVError: If DDEV commands fail.
+    """
+    from nichebench.execution.runtime.workspace.cleanup import (
+        best_effort_network_hygiene,
+    )
+    from nichebench.execution.runtime.workspace.model import DDEVError
+
+    try:
+        run_logged_command(["ddev", "start"], path, command_log, timeout=timeout)
+    except subprocess.CalledProcessError as exc:
+        if is_network_pool_exhaustion_error(exc):
+            best_effort_network_hygiene(path, ddev_project_name, command_log, timeout=timeout)
+            run_logged_command(["ddev", "start"], path, command_log, timeout=timeout)
+        else:
+            raise DDEVError(f"DDEV command failed: {exc.stderr}") from exc
+
+
 def ddev_start(
     path: Path,
     setup_mode: str,
+    ddev_project_name: str,
     command_log: list[dict[str, object]],
     setup_warnings: list[str],
     timeout: Optional[int] = None,
@@ -131,30 +202,45 @@ def ddev_start(
     Args:
         path: Workspace path (used as CWD for ddev commands).
         setup_mode: Either "config_import" or "db_snapshot".
+        ddev_project_name: Name of the DDEV project being started.  Used to
+            scope container/network hygiene so parallel runs are not affected.
         command_log: Shared command log list to append entries to.
         setup_warnings: Shared warnings list for non-fatal setup issues.
         timeout: Optional command timeout in seconds.
         post_setup_commands: Optional list of commands to run after setup.
 
     Raises:
-        DDEVError: If DDEV commands fail.
+        DDEVError: If DDEV commands fail or the project name is invalid.
     """
     from nichebench.execution.runtime.workspace.cleanup import (
         best_effort_network_hygiene,
     )
     from nichebench.execution.runtime.workspace.model import DDEVError
 
-    # Best-effort network hygiene before starting a new DDEV project.
-    best_effort_network_hygiene(path, "", command_log, timeout=timeout)
+    if not ddev_project_name:
+        raise DDEVError("ddev_start requires a non-empty DDEV project name")
+    if not is_valid_ddev_project_name(ddev_project_name):
+        raise DDEVError(
+            f"Invalid DDEV project name {ddev_project_name!r}: "
+            "expected a lowercase DNS label ([a-z0-9-], 1-63 chars, no leading/trailing hyphen)"
+        )
 
-    try:
-        run_logged_command(["ddev", "start"], path, command_log, timeout=timeout)
-    except subprocess.CalledProcessError as exc:
-        if is_network_pool_exhaustion_error(exc):
-            best_effort_network_hygiene(path, "", command_log, timeout=timeout)
-            run_logged_command(["ddev", "start"], path, command_log, timeout=timeout)
-        else:
-            raise DDEVError(f"DDEV command failed: {exc.stderr}") from exc
+    # Best-effort network hygiene before starting a new DDEV project.  The
+    # real project name is always passed so that containers/networks owned by
+    # other (possibly running) projects are left alone.  Hygiene runs under
+    # the same host-wide lock as `ddev start`: another project must not create
+    # a network while this sweep is inspecting attachments.
+    #
+    # `ddev start` creates the shared `ddev-router` container on first use.
+    # Two projects starting concurrently race to create it and the loser
+    # fails with "Conflict ... /ddev-router already in use", so the start
+    # attempt (including its network-exhaustion retry) runs under a
+    # host-wide lock.  The lock is released before `ddev composer install`
+    # and the remaining setup steps.
+    lock_timeout = float(timeout) if timeout else DDEV_START_LOCK_TIMEOUT_SECONDS
+    with exclusive_ddev_start_lock(timeout_seconds=lock_timeout):
+        best_effort_network_hygiene(path, ddev_project_name, command_log, timeout=timeout)
+        _start_with_retry(path, ddev_project_name, command_log, timeout)
 
     run_logged_command(["ddev", "composer", "install"], path, command_log, timeout=timeout)
 

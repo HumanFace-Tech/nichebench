@@ -50,7 +50,7 @@ src/nichebench/
   utils/            git.py, io.py
 
 docs/               Full documentation shelf
-scripts/            runtime_smoke.py, runtime_maintenance.py, sync_data_branches.py
+scripts/            runtime_smoke.py, runtime_maintenance.py, runtime_timing.py, sync_data_branches.py
 tests/unit/         unit tests
 openspec/           design proposals and task specs
 nichebench.sample.yml  ← copy to nichebench.yml to configure a run
@@ -137,7 +137,7 @@ poetry run nichebench run drupal_runtime runtime --ids drupal_runtime_001 \
   --model groq/llama-3.3-70b-versatile
 ```
 
-> **Sequential DDEV constraint:** Only one DDEV project can be active on a host at a time. Do not attempt parallel runtime runs — they will produce resource conflicts.
+> **Sequential default:** Runtime concurrency defaults to one DDEV project per host. To run two tasks concurrently, set `evaluation.runtime_max_concurrent_projects: 2` and raise both `evaluation.parallelism` and `evaluation.runtime_max_workers` to 2. Remote providers may enforce shared quotas or rate limits, and local models on one GPU serialize calls; CPU, RAM, and Docker are shared. See [Runtime Parallelism](docs/runtime/runtime-parallelism.md).
 
 CI does **not** run runtime smoke. It only runs the unit gates above.
 
@@ -161,6 +161,7 @@ rule set.
 | Runtime architecture & lifecycle | [docs/runtime/runtime-architecture-lifecycle.md](../docs/runtime/runtime-architecture-lifecycle.md) |
 | Runtime task authoring | [docs/runtime/runtime-task-authoring.md](../docs/runtime/runtime-task-authoring.md) |
 | Runtime smoke tests | [docs/runtime/runtime-smoke-tests.md](../docs/runtime/runtime-smoke-tests.md) |
+| Runtime parallelism | [docs/runtime/runtime-parallelism.md](../docs/runtime/runtime-parallelism.md) |
 | Runtime diagnostics playbook | [docs/runtime/runtime-diagnostics-playbook.md](../docs/runtime/runtime-diagnostics-playbook.md) |
 | Runtime reporting & scoring | [docs/runtime/runtime-reporting-scoring.md](../docs/runtime/runtime-reporting-scoring.md) |
 | Classic task docs | [docs/tasks/index.md](../docs/tasks/index.md) |

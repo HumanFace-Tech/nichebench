@@ -235,7 +235,9 @@ attempt. The `CaptureRun` object is allocated from the executor's results
 directory per task run and passed explicitly down the call chain; there is no
 mutable executor-global recorder. Application capture uses `ContextVar` scopes,
 with token reset in `finally`; nested scopes restore the previous session and
-lane. This isolation does not lift the host's sequential DDEV constraint.
+lane. This isolation is independent of DDEV project concurrency. Runtime tasks
+default to one active project per host; configure host slots and worker limits
+to run tasks concurrently. See [Runtime Parallelism](./runtime-parallelism.md).
 
 ## Privacy
 
@@ -332,6 +334,64 @@ journals, blobs, streams, and DB copies unchanged. A separate reconciliation
 audit should record the old/new completeness, evidence hashes, final judge
 attempts, and known omissions. It must not repair missing bytes by invention or
 change benchmark scores or recorded stage outcomes.
+
+## Timing analysis
+
+`scripts/runtime_timing.py` estimates where wall-clock time went, using only
+artifacts a run already produced. It never re-executes anything, never contacts
+the provider, and never changes a score.
+
+```bash
+poetry run python scripts/runtime_timing.py \
+  --result-dir results/drupal_runtime/runtime/<model>/<run>/runtime/<task_id>
+```
+
+Pass `--capture` instead of `--result-dir` to point straight at a
+`captures/<uuid>` archive. Add `--json` for machine-readable output and
+`--top N` to change how many tools are listed (default 10).
+
+With `--result-dir`, the script reads `capture.json` to locate the archive
+(stored paths are relative to the repo working directory) and reads
+`runtime_trace.json` for stage durations. With `--capture`, stage durations are
+unavailable.
+
+What it reports:
+
+| Metric | Source | Meaning |
+|---|---|---|
+| wall span | `runtime_trace.json` `started_at`/`ended_at`, falling back to the journal timestamp span | Total elapsed time for the task |
+| model request time | `http_request_sent` → `http_response_complete` pairs in `events.jsonl`, matched by `request_id` | Round-trip wall time per request: provider compute + network + streaming |
+| idle/queue gap | response completion → next request sent, in timestamp order | Time between calls; not GPU wait time |
+| tool time | `opencode.db` `part.data` → `state.time.start`/`state.time.end` (epoch ms) | Tool execution time only |
+| unaccounted | wall span − request time − idle/queue gaps | Setup, checks, scoring, and anything outside the request/gap sequence |
+| stages | `runtime_trace.json` `stages[]` | Per-stage duration and status |
+
+Percentiles use the nearest-rank method (no interpolation). Attempt and judge
+journals are parsed separately and reported per lane. Incomplete request pairs
+(a request with no response terminal) are counted, and malformed journal lines
+or malformed `part.data` rows are skipped and counted rather than raised. The
+counts surface as `model_requests.malformed_lines`,
+`tool_calls.malformed_rows`, and `tool_calls.missing_timing` in the JSON
+output, with a per-journal breakdown under `journals`.
+
+Read the numbers with their limits in mind:
+
+- **Request time is round trip.** It bundles provider inference, network
+  latency, and stream transfer. It is not provider-side inference time.
+- **Gaps are not GPU telemetry.** The harness cannot see provider-side queueing
+  or hidden reasoning. A gap covers tool execution, agent-side reasoning, and
+  anything else the harness does not observe.
+- **Tool time is a subset of the gap.** Tools usually run between a response
+  and the next request.
+- **Unaccounted time is expected.** It absorbs workspace setup, deterministic
+  checks, judge scoring, and artifact finalization.
+
+A missing capture archive, missing trace, or missing session-store snapshot
+degrades the report: the script prints what it has and still exits 0.
+
+```bash
+poetry run pytest -q tests/unit/scripts/test_runtime_timing.py
+```
 
 ## Tests
 

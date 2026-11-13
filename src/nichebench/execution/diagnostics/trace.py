@@ -250,6 +250,8 @@ _INFRASTRUCTURE_ERROR_MARKERS = (
     "failed to build",
     "error getting credentials",
     "permission denied",
+    "image build lock",
+    "ddev start lock",
 )
 
 

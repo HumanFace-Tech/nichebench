@@ -733,8 +733,9 @@ class TestCageModeDDEVImageFlow:
         assert probe_call[0][0][entrypoint_idx + 1] == "sh"
 
     @patch("nichebench.execution.orchestrator.subprocess.run")
-    def test_resolve_effective_cage_image_missing_auto_build_enabled(self, mock_run, tmp_path):
+    def test_resolve_effective_cage_image_missing_auto_build_enabled(self, mock_run, tmp_path, monkeypatch):
         """Missing binaries with auto_build enabled builds derived image."""
+        monkeypatch.setenv("NICHEBENCH_RUNTIME_SLOT_DIR", str(tmp_path / "slots"))
         executor = _make_executor(
             {
                 "runtime_mode": "cage",
@@ -745,23 +746,20 @@ class TestCageModeDDEVImageFlow:
             }
         )
 
-        # Mock probe failures (binaries missing), then build success, then probe success
-        call_count = [0]
+        # The base image never has the binaries; the derived image only has
+        # them once the build ran.
+        built = []
 
         def mock_side_effect(*args, **kwargs):
-            call_count[0] += 1
             cmd = args[0] if args else []
             cmd_str = " ".join(cmd)
-            # First probe on base image (fails)
-            if call_count[0] == 1 and "docker run" in cmd_str and "ghcr.io/opencode-ai/opencode:v0.14.0" in cmd_str:
-                return MagicMock(returncode=1, stdout="", stderr="")
-            # Build call (succeeds)
-            if (
-                call_count[0] == 2
-                and "docker build" in cmd_str
-                or (call_count[0] == 3 and "docker run" in cmd_str and "nichebench/opencode-ddev:1.14.25" in cmd_str)
-            ):
+            if "docker build" in cmd_str:
+                built.append(cmd_str)
                 return MagicMock(returncode=0, stdout="", stderr="")
+            if "docker run" in cmd_str and "ghcr.io/opencode-ai/opencode:v0.14.0" in cmd_str:
+                return MagicMock(returncode=1, stdout="", stderr="")
+            if "docker run" in cmd_str:
+                return MagicMock(returncode=0 if built else 1, stdout="", stderr="")
             return MagicMock(returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = mock_side_effect
@@ -770,8 +768,8 @@ class TestCageModeDDEVImageFlow:
 
         # Should return derived image
         assert effective_image == "nichebench/opencode-ddev:1.14.25"
-        # Verify probe, build, probe sequence
-        assert mock_run.call_count >= 2
+        # The derived image was built exactly once.
+        assert len(built) == 1
 
     @patch("nichebench.execution.orchestrator.subprocess.run")
     def test_resolve_effective_cage_image_missing_auto_build_disabled(self, mock_run, tmp_path):
@@ -811,8 +809,9 @@ class TestCageModeDDEVImageFlow:
         assert not mock_run.called
 
     @patch("nichebench.execution.orchestrator.subprocess.run")
-    def test_resolve_effective_cage_image_build_fails_raises(self, mock_run, tmp_path):
+    def test_resolve_effective_cage_image_build_fails_raises(self, mock_run, tmp_path, monkeypatch):
         """Build failure raises ValidationError."""
+        monkeypatch.setenv("NICHEBENCH_RUNTIME_SLOT_DIR", str(tmp_path / "slots"))
         executor = _make_executor(
             {
                 "runtime_mode": "cage",
@@ -822,19 +821,14 @@ class TestCageModeDDEVImageFlow:
             }
         )
 
-        # Mock probe failure (binaries missing), then build failure
-        call_count = [0]
-
+        # Every probe fails; the build fails too.
         def mock_side_effect(*args, **kwargs):
-            call_count[0] += 1
             cmd = args[0] if args else []
             cmd_str = " ".join(cmd)
-            # First probe on base image (fails)
-            if call_count[0] == 1 and "docker run" in cmd_str:
-                return MagicMock(returncode=1, stdout="", stderr="")
-            # Build call fails
-            if call_count[0] == 2 and "docker build" in cmd_str:
+            if "docker build" in cmd_str:
                 raise subprocess.CalledProcessError(1, "docker build", stderr="Build failed")
+            if "docker run" in cmd_str:
+                return MagicMock(returncode=1, stdout="", stderr="")
             return MagicMock(returncode=0, stdout="", stderr="")
 
         mock_run.side_effect = mock_side_effect

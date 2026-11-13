@@ -649,3 +649,10 @@ def test_handle_exception_keeps_agent_execution_model_failure_scored():
     assert result.passed is False
     assert result.error_kind is None
     assert "error_kind" not in result.judge_output
+
+
+def test_lock_timeout_messages_are_infrastructure():
+    from nichebench.execution.diagnostics.trace import is_infrastructure_failure
+
+    assert is_infrastructure_failure("runtime_execution", "Timed out waiting for the image build lock")
+    assert is_infrastructure_failure("runtime_execution", "Timed out waiting for the DDEV start lock")

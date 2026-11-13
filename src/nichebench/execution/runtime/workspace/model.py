@@ -35,6 +35,14 @@ from nichebench.execution.runtime.workspace import cleanup as _cleanup
 from nichebench.execution.runtime.workspace import ddev as _ddev
 from nichebench.execution.runtime.workspace import diff as _diff
 from nichebench.execution.runtime.workspace import static_analysis as _static_analysis
+from nichebench.execution.runtime.workspace.ddev import is_valid_ddev_project_name
+
+__all__ = [
+    "DDEVError",
+    "Workspace",
+    "WorkspaceError",
+    "is_valid_ddev_project_name",
+]
 
 
 class WorkspaceError(Exception):
@@ -45,6 +53,16 @@ class DDEVError(Exception):
     """Exception raised for DDEV operation errors."""
 
 
+def _sanitize_task_id(task_id: str) -> str:
+    """Convert a task id into a lowercase DNS-label-safe fragment.
+
+    Only ASCII alphanumerics and hyphens survive; everything else becomes a
+    hyphen.  The result never starts or ends with a hyphen.
+    """
+    sanitized = "".join(c if (c.isascii() and c.isalnum()) else "-" for c in task_id)
+    return sanitized.strip("-").lower()[:24] or "task"
+
+
 class Workspace:
     """Manage isolated runtime workspace lifecycle and command logging."""
 
@@ -53,11 +71,20 @@ class Workspace:
         self.task_id = task_id
         self.workspace_id = str(uuid.uuid4())[:8]
         self.path = base_path / f"run-{task_id}-{self.workspace_id}"
-        safe_task_id = "".join(c if c.isalnum() else "-" for c in task_id).strip("-").lower()[:24] or "task"
+        safe_task_id = _sanitize_task_id(task_id)
         self.ddev_project_name = f"nb-{safe_task_id}-{self.workspace_id}"
+        if not is_valid_ddev_project_name(self.ddev_project_name):
+            raise WorkspaceError(
+                f"Generated DDEV project name {self.ddev_project_name!r} is not a valid DNS label"
+            )
         self.run_artifacts_path = self.path / "results" / "run"
         self.command_log: list[dict[str, object]] = []
         self.setup_warnings: list[str] = []
+
+    @property
+    def ddev_subdomain(self) -> str:
+        """HTTPS subdomain used to reach this project's DDEV instance."""
+        return f"{self.ddev_project_name}.ddev.site"
 
     def create(self, source_path: Path, sha: Optional[str] = None):
         """Create a new isolated workspace from source repository path."""
@@ -179,6 +206,7 @@ class Workspace:
         _ddev.ddev_start(
             path=self.path,
             setup_mode=setup_mode,
+            ddev_project_name=self.ddev_project_name,
             command_log=self.command_log,
             setup_warnings=self.setup_warnings,
             timeout=timeout,
