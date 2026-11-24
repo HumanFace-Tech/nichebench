@@ -14,6 +14,7 @@ Canonical documentation for `drupal_runtime` agentic tasks.
 | [Runtime Parallelism](./runtime-parallelism.md) | Per-test DDEV isolation, host concurrency limits, cleanup, and verification |
 | [Diagnostics Playbook](./runtime-diagnostics-playbook.md) | Failure triage, artifact inspection order, troubleshooting examples, report template |
 | [Reporting & Scoring](./runtime-reporting-scoring.md) | Deterministic %, Judge %, Hybrid %, critical gate, Rich output table, artifact inventory |
+| [Runtime Gate Policy](./runtime-gate-policy.md) | Interim gate policy, audit findings, scope, and limitations |
 | [MiniMax Model Metadata](./minimax-model-metadata.md) | Backported MiniMax M3/M3.1 declarations, provenance, exclusions, profile opt-in |
 | [Runtime Tracing](./runtime-tracing.md) | Full-trace capture: exact HTTP bytes, agent timeline, session-store archive, boundaries, privacy |
 
