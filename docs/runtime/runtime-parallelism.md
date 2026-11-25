@@ -81,5 +81,5 @@ remove resources attached to active projects.
 
 DDEV-level concurrency has been verified with two projects running
 simultaneously under distinct subdomains, databases, and containers, with both
-serving HTTP. End-to-end validation of two concurrent runtime tasks using the
-remote MiniMax MUT is in progress and has not yet passed.
+serving HTTP. A concurrent benchmark run also verified task isolation and
+teardown. This validates the runtime lifecycle, not the benchmark pass rate.

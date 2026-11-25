@@ -12,7 +12,7 @@
 - **Safe shared resources** — A host-wide lock serializes `ddev start` so parallel projects do not race to create `ddev-router`; image builds are serialized per tag. Cleanup is project-scoped and never removes active, paused, or restarting projects.
 - **Timing estimator** — `scripts/runtime_timing.py` reports model request round-trip, tool time, idle/queue gaps, and stage durations from existing capture artifacts.
 
-End-to-end validation with two concurrent runtime tasks using the remote MiniMax M2.7 MUT is in progress.
+Concurrent runtime validation confirmed that two isolated projects and cages could run together and that teardown removed their resources.
 
 ## 0.3.0 — Leaner Scoring and Runtime V2
 
