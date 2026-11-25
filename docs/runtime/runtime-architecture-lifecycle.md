@@ -1,6 +1,6 @@
 # Runtime Tasks — Architecture & Lifecycle
 
-> **Canonical reference:** [Runtime Task Authoring](./runtime-task-authoring.md) | [Smoke Tests](./runtime-smoke-tests.md) | [Diagnostics Playbook](./runtime-diagnostics-playbook.md) | [Reporting & Scoring](./runtime-reporting-scoring.md)
+> **Canonical reference:** [Runtime Task Authoring](./runtime-task-authoring.md) | [Smoke Tests](./runtime-smoke-tests.md) | [Diagnostics Playbook](./runtime-diagnostics-playbook.md) | [Reporting & Scoring](./runtime-reporting-scoring.md) | [Runtime Parallelism](./runtime-parallelism.md)
 
 ---
 
@@ -89,6 +89,8 @@ Runtime tasks default to `cage` mode. The cage is a Docker container that:
 |---|---|
 | Workspace path | `workspaces/run-<task_id>-<uuid8>/` |
 | DDEV project name | `nb-<safe_task_id>-<uuid8>` — parallel-safe, never collides |
+| DDEV subdomain | `https://<project-name>.ddev.site` — unique per task project |
+| Host concurrency | `runtime_max_concurrent_projects` slots, default `1`, enforced across processes |
 | DDEV cleanup (manual smoke) | `ddev stop --remove-data --omit-snapshot` + workspace dir deletion |
 | DDEV cleanup (executor internal) | `ddev delete --omit-snapshot -y` (see `src/nichebench/execution/runtime/workspace/ddev.py`) |
 | Workspace retention | Set `runtime_keep_workspaces: true` to debug |

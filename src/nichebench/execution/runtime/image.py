@@ -28,8 +28,10 @@ Operational constraints
 
   1. DDEV disabled → return ``base_image`` unchanged.
   2. ``probe(base_image)`` succeeds → return ``base_image`` (already DDEV-capable).
-  3. ``auto_build`` enabled → run ``build(base_image, ddev_image)``, then probe
-     the derived image. Return it on success; raise on failure.
+  3. ``auto_build`` enabled → take the per-tag build lock, re-probe the
+     derived image (another process may have built it meanwhile), build only
+     when it is still missing, then probe. Return it on success; raise on
+     failure.
   4. ``auto_build`` disabled → raise immediately, requiring callers to either
      enable auto-build or provision a compatible base image externally.
 
@@ -51,6 +53,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict
+
+from nichebench.execution.runtime import concurrency as runtime_concurrency
 
 
 def probe_image_for_ddev(image: str, subprocess_module: Any) -> bool:
@@ -187,10 +191,13 @@ def resolve_effective_cage_image(
        ``runtime_container_image`` unchanged (caller handles DDEV setup).
     2. Probe ``runtime_container_image`` with ``probe()`` → returns
        ``runtime_container_image`` if it already has ddev/docker/git.
-    3. ``runtime_container_ddev_auto_build`` is ``True`` → call ``build()`` to
-       produce the derived DDEV image, then probe it. Return the derived image
-       on success; raise ``validation_error_cls`` if the built image still fails
-       the probe (indicates a broken Dockerfile or base image).
+    3. ``runtime_container_ddev_auto_build`` is ``True`` → take the per-tag
+       build lock, re-probe the derived image (a concurrent process may have
+       built it while this caller waited for the lock), call ``build()`` only
+       when the derived image is still missing, then probe it. Return the
+       derived image on success; raise ``validation_error_cls`` if the built
+       image still fails the probe (indicates a broken Dockerfile or base
+       image).
     4. ``auto_build`` is ``False`` → raise ``validation_error_cls`` immediately,
        signalling that the caller must either enable auto-build or pre-provision
        a compatible base image.
@@ -238,12 +245,18 @@ def resolve_effective_cage_image(
     if probe(base_image):
         return base_image
     if auto_build:
-        build(base_image, ddev_image)
-        if probe(ddev_image):
-            return ddev_image
-        raise validation_error_cls(
-            f"Derived DDEV image {ddev_image} still lacks required ddev/docker/git binaries or ddev drush support"
-        )
+        # The build lock keeps two processes from building the same tag at the
+        # same time. Once it is held, the derived image is probed again: a
+        # concurrent process may have built it while this caller was waiting.
+        with runtime_concurrency.exclusive_build_lock(ddev_image):
+            if probe(ddev_image):
+                return ddev_image
+            build(base_image, ddev_image)
+            if probe(ddev_image):
+                return ddev_image
+            raise validation_error_cls(
+                f"Derived DDEV image {ddev_image} still lacks required ddev/docker/git binaries or ddev drush support"
+            )
     raise validation_error_cls(
         "Base image "
         f"{base_image} lacks required ddev/docker/git binaries or ddev drush support "

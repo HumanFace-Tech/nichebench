@@ -3,6 +3,17 @@
 > **Historical release notes.** Current pins are Python 3.13–3.14, LiteLLM
 > `1.106.7`, and OpenCode `2.2.5`; see `pyproject.toml` and `AGENTS.md`.
 
+## Unreleased — Runtime Parallelism
+
+> **2026-11-13**
+
+- **Per-test DDEV isolation** — Every runtime task uses a unique project name and subdomain (`nb-<task>-<uuid8>.ddev.site`), workspace, database, containers, and volumes. Two DDEV projects were started concurrently with distinct subdomains and databases.
+- **Opt-in host concurrency** — `runtime_max_concurrent_projects` defaults to 1. Set it, `parallelism`, and `runtime_max_workers` to 2 to run two runtime tasks concurrently; a cross-process `flock` semaphore enforces the host slot cap.
+- **Safe shared resources** — A host-wide lock serializes `ddev start` so parallel projects do not race to create `ddev-router`; image builds are serialized per tag. Cleanup is project-scoped and never removes active, paused, or restarting projects.
+- **Timing estimator** — `scripts/runtime_timing.py` reports model request round-trip, tool time, idle/queue gaps, and stage durations from existing capture artifacts.
+
+Concurrent runtime validation confirmed that two isolated projects and cages could run together and that teardown removed their resources.
+
 ## 0.3.0 — Leaner Scoring and Runtime V2
 
 > **2026-11-10**
@@ -56,7 +67,7 @@
 - **Agentic runtime tasks (`drupal_runtime`)** — Full task execution inside isolated Docker cages with DDEV bootstrap, deterministic checks, trajectory capture, and hybrid scoring. See [Runtime Documentation](./runtime/index.md).
 - **Runtime cage isolation** — Input/output/ops island mount topology, git/bash wrapper scripts, and container lifecycle management for clean task isolation.
 - **Runtime diagnostics and forensics** — `RuntimeTrace` post-hoc analysis, structured artifact inventory, and a [Diagnostics Playbook](./runtime/runtime-diagnostics-playbook.md) for failure triage.
-- **Sequential DDEV constraint** — Runtime tasks require DDEV projects to run one at a time. Parallel runtime execution is not supported; attempting it will produce resource conflicts and incorrect results.
+- **Sequential DDEV default (0.2.0)** — Runtime concurrency defaulted to one DDEV project per host in this release. Current configuration for concurrent runtime tasks is documented in [Runtime Parallelism](./runtime/runtime-parallelism.md).
 - **Artifact retention controls** — `runtime_artifact_retention` (`minimal | standard | full`) and `runtime_keep_workspaces` for managing disk usage during extended evaluation runs.
 
 ### Dependency Updates
@@ -68,7 +79,7 @@
 | Limitation | Detail |
 |---|---|
 | **Runtime requires Docker + DDEV** | Runtime smoke cannot run in environments without Docker or DDEV. CI does not execute runtime tasks. |
-| **Sequential DDEV only** | Only one DDEV project can be active at a time per host. |
+| **Runtime concurrency defaults to one** | Raise the host slot and worker limits to run multiple runtime tasks. See [Runtime Parallelism](./runtime/runtime-parallelism.md). |
 | **Provider credentials required** | MUT and judge calls require valid `GROQ_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY` (or equivalent for other LiteLLM providers). |
 | **Private submodule data** | Runtime task manifests and classic task data live in private Git submodules (`nichebench-data-drupal`, `nichebench-drupal-runtime-pack`). |
 | **Private benchmark artifacts** | Raw results, `/reports/`, `nichebench.yml`, credentials, and historical internal audits are not committed. See [benchmark artifact boundary](#benchmark-artifact-privacy). |

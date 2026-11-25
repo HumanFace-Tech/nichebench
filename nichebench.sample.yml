@@ -103,6 +103,13 @@ evaluation:
   # derived DDEV image from this base image to add the ddev/docker/git binaries.
   runtime_container_image: ghcr.io/anomalyco/opencode:2.2.5
   runtime_container_ddev_image: nichebench/opencode-ddev:2.2.5
+  # Host-level cap on runtime projects running concurrently on this host.
+  # Default 1 preserves sequential runs. To run two tasks in one CLI, also set
+  # parallelism and runtime_max_workers to 2. The host cap spans CLI processes.
+  # runtime_max_concurrent_projects: 1
+  # How long a task waits for a free host slot before the run is recorded as
+  # a configuration error.
+  # runtime_slot_timeout_seconds: 3600
   # V2 provider package used for OpenAI-compatible endpoints (V2 `package`).
   runtime_opencode_provider_package: "aisdk:@ai-sdk/openai-compatible"
   # V2 provider compatibility flag (V1 `options.setCacheKey`).

@@ -53,6 +53,12 @@ class NicheBenchConfig:
                 "runtime_container_read_only": False,
                 "runtime_timeout_minutes": 60,
                 "runtime_max_workers": 1,
+                # Host-level cap on concurrent runtime projects. 1 keeps the
+                # historical one-project-at-a-time behaviour; higher values
+                # only take effect when the host can run several DDEV
+                # projects side by side.
+                "runtime_max_concurrent_projects": 1,
+                "runtime_slot_timeout_seconds": 3600,
                 "runtime_drush_mode": "ddev",
                 "runtime_drush_command": ["drush"],
                 # Structural sanity layer for code generation (lean: hard-fail

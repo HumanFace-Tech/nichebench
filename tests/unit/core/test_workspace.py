@@ -5,6 +5,8 @@ from unittest.mock import patch
 import pytest
 
 from nichebench.execution.runtime.workspace import DDEVError, Workspace
+from nichebench.execution.runtime.workspace import ddev as ddev_module
+from nichebench.execution.runtime.workspace.ddev import is_valid_ddev_project_name
 
 
 def _cp(
@@ -43,6 +45,72 @@ def test_ddev_start_retries_once_on_subnet_exhaustion(tmp_path: Path):
 
     assert start_calls == 2
     assert hygiene_mock.call_count == 2
+
+
+def test_ddev_start_hygiene_receives_real_project_name(tmp_path: Path):
+    """Hygiene must be scoped to the real project name, never an empty string."""
+    workspace = Workspace(base_path=tmp_path, task_id="drupal_runtime_001")
+    workspace.path = tmp_path / "workspace"
+    workspace.path.mkdir(parents=True)
+
+    start_calls = 0
+
+    def run_logged(command, path=None, command_log=None, timeout=None):
+        nonlocal start_calls
+        if command[:2] == ["ddev", "start"]:
+            start_calls += 1
+            if start_calls == 1:
+                raise subprocess.CalledProcessError(
+                    returncode=1,
+                    cmd=command,
+                    stderr="all predefined address pools have been fully subnetted",
+                )
+        return _cp(command)
+
+    with (
+        patch("nichebench.execution.runtime.workspace.ddev.run_logged_command", side_effect=run_logged),
+        patch("nichebench.execution.runtime.workspace.cleanup.best_effort_network_hygiene") as hygiene_mock,
+    ):
+        workspace.ddev_start(setup_mode="db_snapshot")
+
+    assert hygiene_mock.call_count == 2
+    for call in hygiene_mock.call_args_list:
+        assert call.args[1] == workspace.ddev_project_name
+        assert call.args[1] != ""
+
+
+def test_workspace_ddev_start_passes_project_name_to_ddev_module(tmp_path: Path):
+    workspace = Workspace(base_path=tmp_path, task_id="drupal_runtime_001")
+    workspace.path = tmp_path / "workspace"
+    workspace.path.mkdir(parents=True)
+
+    with patch("nichebench.execution.runtime.workspace.ddev.ddev_start") as ddev_start_mock:
+        workspace.ddev_start(setup_mode="db_snapshot")
+
+    assert ddev_start_mock.call_count == 1
+    assert ddev_start_mock.call_args.kwargs["ddev_project_name"] == workspace.ddev_project_name
+
+
+def test_ddev_start_rejects_empty_project_name(tmp_path: Path):
+    """An empty project name would make every harness resource look stale."""
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True)
+    command_log: list[dict[str, object]] = []
+
+    with (
+        patch("nichebench.execution.runtime.workspace.ddev.run_logged_command", side_effect=_cp),
+        patch("nichebench.execution.runtime.workspace.cleanup.best_effort_network_hygiene") as hygiene_mock,
+        pytest.raises(DDEVError),
+    ):
+        ddev_module.ddev_start(
+            path=workspace_dir,
+            setup_mode="db_snapshot",
+            ddev_project_name="",
+            command_log=command_log,
+            setup_warnings=[],
+        )
+
+    assert hygiene_mock.call_count == 0
 
 
 def test_ddev_start_does_not_retry_on_non_subnet_errors(tmp_path: Path):
@@ -173,6 +241,54 @@ def test_cleanup_can_preserve_workspace_files_but_release_ddev_resources(
 
     assert any(c.startswith("ddev delete --omit-snapshot -y") for c in called_commands)
     assert workspace.path.exists()
+
+
+# ---------------------------------------------------------------------------
+# DDEV project naming and subdomain
+# ---------------------------------------------------------------------------
+
+
+def test_is_valid_ddev_project_name_accepts_lowercase_dns_labels():
+    assert is_valid_ddev_project_name("nb")
+    assert is_valid_ddev_project_name("nb-drupal-runtime-001-1a2b3c4d")
+    assert is_valid_ddev_project_name("a" * 63)
+
+
+def test_is_valid_ddev_project_name_rejects_invalid_labels():
+    assert not is_valid_ddev_project_name("")
+    assert not is_valid_ddev_project_name("NB-Upper")
+    assert not is_valid_ddev_project_name("under_score")
+    assert not is_valid_ddev_project_name("-leading-hyphen")
+    assert not is_valid_ddev_project_name("trailing-hyphen-")
+    assert not is_valid_ddev_project_name("a" * 64)
+    assert not is_valid_ddev_project_name("with space")
+
+
+def test_workspace_project_names_are_valid_and_unique_per_workspace(tmp_path: Path):
+    first = Workspace(base_path=tmp_path, task_id="drupal_runtime_001")
+    second = Workspace(base_path=tmp_path, task_id="drupal_runtime_001")
+    other_task = Workspace(base_path=tmp_path, task_id="drupal_runtime_002")
+
+    names = [first.ddev_project_name, second.ddev_project_name, other_task.ddev_project_name]
+
+    assert len(set(names)) == 3
+    for name in names:
+        assert is_valid_ddev_project_name(name)
+        assert name.startswith("nb-")
+
+
+def test_workspace_ddev_subdomain_is_derived_from_project_name(tmp_path: Path):
+    workspace = Workspace(base_path=tmp_path, task_id="drupal_runtime_001")
+
+    assert workspace.ddev_subdomain == f"{workspace.ddev_project_name}.ddev.site"
+
+
+def test_workspace_project_name_is_sanitized_for_exotic_task_ids(tmp_path: Path):
+    workspace = Workspace(base_path=tmp_path, task_id="Drupal_Runtime/001")
+    other = Workspace(base_path=tmp_path, task_id="tâche-unicode")
+
+    assert is_valid_ddev_project_name(workspace.ddev_project_name)
+    assert is_valid_ddev_project_name(other.ddev_project_name)
 
 
 # ---------------------------------------------------------------------------

@@ -55,16 +55,21 @@ def resolve_runtime_checks_file(test_case: TestCaseSpec) -> Optional[Path]:
     return checks_path if checks_path.exists() else None
 
 
-def load_runtime_checks_by_id(checks_path: Path) -> Dict[str, Dict[str, Any]]:
+def load_runtime_checks_by_id(
+    checks_path: Path,
+    parsed: Any = None,
+) -> Dict[str, Dict[str, Any]]:
     """Load a checks YAML file and index it by check id.
 
-    Returns an empty dict if the file is missing, unreadable, or has no
-    parseable ``checks`` list.
+    Pass ``parsed`` to reuse YAML already read from ``checks_path`` so the
+    file is only read once. Returns an empty dict if the file is missing,
+    unreadable, or has no parseable ``checks`` list.
     """
-    try:
-        parsed = yaml.safe_load(checks_path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    if parsed is None:
+        try:
+            parsed = yaml.safe_load(checks_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
 
     if not isinstance(parsed, dict):
         return {}
@@ -82,6 +87,46 @@ def load_runtime_checks_by_id(checks_path: Path) -> Dict[str, Dict[str, Any]]:
     return by_id
 
 
+def _criticality_overrides(sidecar: Any) -> Dict[str, Any]:
+    """Extract the ``required_command_criticality`` map from a parsed sidecar.
+
+    Returns an empty dict when the sidecar is missing, not a mapping, or the
+    ``required_command_criticality`` key is absent or not a mapping.
+    """
+    if not isinstance(sidecar, dict):
+        return {}
+    overrides = sidecar.get("required_command_criticality", {})
+    return overrides if isinstance(overrides, dict) else {}
+
+
+def _resolve_criticality(overrides: Dict[str, Any], command: str) -> bool:
+    """Resolve the criticality of a required command.
+
+    Honors an explicit boolean override; a missing key or a malformed
+    (non-boolean) override falls back to ``True`` (critical by default).
+    """
+    critical = overrides.get(command, True)
+    return critical if isinstance(critical, bool) else True
+
+
+def _apply_required_command_criticality(
+    normalized: List[Dict[str, Any]],
+    overrides: Dict[str, Any],
+) -> None:
+    """Apply ``required_command_criticality`` overrides in place.
+
+    Only ``required_command`` checks are adjusted. Missing keys or malformed
+    (non-boolean) overrides leave the check at its (critical) default of True.
+    """
+    for check in normalized:
+        if check.get("type") != "required_command":
+            continue
+        command = check.get("command")
+        if command is None:
+            continue
+        check["critical"] = _resolve_criticality(overrides, str(command))
+
+
 def load_runtime_checks(
     test_case: TestCaseSpec,
     normalize_checks: Callable[[Any], List[Dict[str, Any]]],
@@ -93,6 +138,10 @@ def load_runtime_checks(
       2. If a sidecar ``checks/<id>.yaml`` file exists, resolve string
          references against it before normalising.
       3. Fall back to inline normalisation.
+
+    When the sidecar resolves no checks we still honour any
+    ``required_command_criticality`` overrides declared on it, so criticality
+    is never silently pinned to ``True`` for an empty checks list.
     """
     raw_checks = test_case.raw.get("checks", [])
     if not isinstance(raw_checks, dict):
@@ -102,9 +151,23 @@ def load_runtime_checks(
     if checks_path is None:
         return normalize_checks(raw_checks)
 
-    checks_by_id = load_runtime_checks_by_id(checks_path)
+    # Read the sidecar once: it indexes check ids and, when present, declares
+    # ``required_command_criticality`` overrides for required_commands.
+    try:
+        sidecar = yaml.safe_load(checks_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        sidecar = None
+
+    overrides = _criticality_overrides(sidecar)
+    checks_by_id = load_runtime_checks_by_id(checks_path, parsed=sidecar) if isinstance(sidecar, dict) else {}
+
     if not checks_by_id:
-        return normalize_checks(raw_checks)
+        # The sidecar resolves no checks. Keep fallback normalisation for the
+        # categories and allowed_paths, but still honour any
+        # required_command_criticality overrides for required_commands.
+        fallback = normalize_checks(raw_checks)
+        _apply_required_command_criticality(fallback, overrides)
+        return fallback
 
     normalized: List[Dict[str, Any]] = []
     critical_categories = {"fail_to_pass", "pass_to_pass", "static"}
@@ -147,7 +210,14 @@ def load_runtime_checks(
             )
 
     for cmd in raw_checks.get("required_commands", []):
-        normalized.append({"name": str(cmd), "type": "required_command", "command": str(cmd), "critical": True})
+        normalized.append(
+            {
+                "name": str(cmd),
+                "type": "required_command",
+                "command": str(cmd),
+                "critical": _resolve_criticality(overrides, str(cmd)),
+            }
+        )
     if raw_checks.get("allowed_paths"):
         normalized.append(
             {

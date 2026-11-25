@@ -34,7 +34,7 @@ The deprecated `code_agent` prototype has been removed. Use `drupal_runtime` for
 
 **Runtime tasks are disabled by default.** Enable with `enable_runtime_tasks: true` in `nichebench.yml`.
 
-> **Sequential DDEV constraint:** Only one DDEV project can be active per host. Parallel runtime runs are not supported.
+> **Sequential default:** Runtime tasks default to one DDEV project per host. To run two concurrently, set `runtime_max_concurrent_projects: 2` and raise `parallelism` and `runtime_max_workers` to 2. See [Runtime Parallelism](docs/runtime/runtime-parallelism.md) for provider and host resource limits.
 
 ```yaml
 evaluation:

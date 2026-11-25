@@ -223,3 +223,25 @@ def test_runtime_defaults_are_present(tmp_path):
     assert eval_conf["runtime_artifact_retention"] == "standard"
     assert eval_conf["runtime_keep_workspaces"] is False
     assert eval_conf["runtime_enable_diagnostics"] is True
+
+
+def test_runtime_host_slot_defaults_are_present(tmp_path):
+    """The host-slot cap defaults to one project at a time."""
+    cfg_path = tmp_path / "defaults.yml"
+    write_yaml(cfg_path, {})
+
+    cfg = NicheBenchConfig(config_path=cfg_path)
+    eval_conf = cfg.get_evaluation_config()
+
+    assert eval_conf["runtime_max_concurrent_projects"] == 1
+    assert eval_conf["runtime_slot_timeout_seconds"] == 3600
+
+
+def test_runtime_host_slot_cap_can_be_overridden(tmp_path):
+    """A config may raise the host cap above the safe default."""
+    cfg_path = tmp_path / "slots.yml"
+    write_yaml(cfg_path, {"evaluation": {"runtime_max_concurrent_projects": 3}})
+
+    cfg = NicheBenchConfig(config_path=cfg_path)
+
+    assert cfg.get_evaluation_config()["runtime_max_concurrent_projects"] == 3

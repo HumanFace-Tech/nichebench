@@ -44,7 +44,7 @@ After three unsuccessful attempts, judge outages or malformed output raise `Judg
 
 Runtime setup, image, Docker, network, CLI, or configuration failures use `error_kind=config_error`. They count as `config_errors` and are also excluded from model averages. Reports display `ERROR`/`N/A` for these excluded rows rather than treating them as 0%.
 
-### Critical Gate
+### Critical gate
 
 ```
 if any critical check failed:
@@ -53,7 +53,7 @@ else:
     passed = (hybrid_score >= threshold)
 ```
 
-Default threshold: `0.7`
+Default threshold: `0.7`. Only checks marked critical can force a failure independently of the hybrid score. For the current task-pack policy, see [Runtime Gate Policy](./runtime-gate-policy.md). A critical check is a gate signal, not by itself proof of task functionality.
 
 ---
 

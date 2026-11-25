@@ -1,6 +1,6 @@
 # Runtime Smoke Tests
 
-> **Related:** [Architecture & Lifecycle](./runtime-architecture-lifecycle.md) | [Task Authoring](./runtime-task-authoring.md) | [Diagnostics Playbook](./runtime-diagnostics-playbook.md)
+> **Related:** [Architecture & Lifecycle](./runtime-architecture-lifecycle.md) | [Task Authoring](./runtime-task-authoring.md) | [Diagnostics Playbook](./runtime-diagnostics-playbook.md) | [Runtime Parallelism](./runtime-parallelism.md)
 
 ---
 
@@ -88,9 +88,13 @@ When `--json` is passed, `runtime_smoke.py` outputs:
 explains why — non-zero exit, missing success marker, command timeout, or
 launch failure.
 
-## Sequential DDEV Constraint
+## DDEV concurrency
 
-Only one DDEV project can be active on a host at a time. Do not run parallel smoke tests — they will produce resource conflicts.
+The default host limit is one runtime project at a time. A smoke test uses an
+existing workspace, so do not run multiple smoke procedures against the same
+project. Separate projects can run concurrently when configured; see
+[Runtime Parallelism](./runtime-parallelism.md) for host slots, resource limits,
+and verification steps.
 
 ## When to Run Smoke Tests
 

@@ -24,7 +24,7 @@ All three must pass before committing. No external services or container runtime
 
 Runtime tasks require a Docker-capable host with DDEV installed. See [Runtime Smoke Tests](../runtime/runtime-smoke-tests.md) for the full procedure.
 
-> **Sequential DDEV constraint:** Only one DDEV project can be active per host at a time. Parallel runtime runs are not supported and will produce resource conflicts.
+> **Sequential default:** Runtime tasks default to one DDEV project per host. To run two concurrently, set `runtime_max_concurrent_projects: 2` and raise `parallelism` and `runtime_max_workers` to 2. Provider quotas, local GPU serialization, CPU, RAM, and Docker can limit throughput. See [Runtime Parallelism](../runtime/runtime-parallelism.md).
 
 ```bash
 # Maintenance scripts
